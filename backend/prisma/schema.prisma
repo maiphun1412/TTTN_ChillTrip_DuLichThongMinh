@@ -1,0 +1,952 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlserver"
+  url      = env("DATABASE_URL")
+}
+
+model ai_chat_sessions {
+  id                   BigInt     @id(map: "PK__ai_chat___3213E83FF0503BE1") @default(autoincrement())
+  customer_id          BigInt?
+  firebase_session_key String     @unique(map: "UQ__ai_chat___39D1113E2A51D8C6") @db.VarChar(255)
+  topic                String?    @db.NVarChar(255)
+  handed_over_to_staff Boolean    @default(false, map: "DF__ai_chat_s__hande__65F62111")
+  created_at           DateTime   @default(now(), map: "DF__ai_chat_s__creat__66EA454A")
+  updated_at           DateTime   @default(now(), map: "DF__ai_chat_s__updat__67DE6983")
+  customers            customers? @relation(fields: [customer_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_ai_chat_sessions_customer")
+}
+
+model articles {
+  id                 BigInt    @id(map: "PK__articles__3213E83FE484744F") @default(autoincrement())
+  title              String    @db.NVarChar(255)
+  slug               String    @unique(map: "UQ__articles__32DD1E4CDD1E543D") @db.VarChar(255)
+  summary            String?   @db.NVarChar(Max)
+  content            String    @db.NVarChar(Max)
+  featured_image_url String?   @db.NVarChar(Max)
+  status             String    @default("DRAFT", map: "DF__articles__status__4C364F0E") @db.VarChar(30)
+  published_at       DateTime?
+  created_by         BigInt?
+  created_at         DateTime  @default(now(), map: "DF__articles__create__4D2A7347")
+  updated_at         DateTime  @default(now(), map: "DF__articles__update__4E1E9780")
+  category           String?   @db.NVarChar(50)
+  users              users?    @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_articles_created_by")
+}
+
+model audit_logs {
+  id          BigInt   @id(map: "PK__audit_lo__3213E83FA3850C4A") @default(autoincrement())
+  user_id     BigInt?
+  module_name String   @db.VarChar(100)
+  action_name String   @db.VarChar(50)
+  entity_name String   @db.VarChar(100)
+  entity_id   BigInt?
+  old_data    String?  @db.NVarChar(Max)
+  new_data    String?  @db.NVarChar(Max)
+  ip_address  String?  @db.VarChar(50)
+  created_at  DateTime @default(now(), map: "DF__audit_log__creat__6BAEFA67")
+  users       users?   @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_audit_logs_user")
+}
+
+model banners {
+  id            BigInt    @id(map: "PK__banners__3213E83FAB73C40F") @default(autoincrement())
+  title         String?   @db.NVarChar(255)
+  image_url     String    @db.NVarChar(Max)
+  link_url      String?   @db.NVarChar(Max)
+  position_name String?   @db.VarChar(100)
+  sort_order    Int       @default(0, map: "DF__banners__sort_or__51EF2864")
+  is_active     Boolean   @default(true, map: "DF__banners__is_acti__52E34C9D")
+  start_at      DateTime?
+  end_at        DateTime?
+}
+
+model pickup_province_fees {
+  id                  BigInt              @id(map: "PK__pickup_p__3213E83FB64FB0D5") @default(autoincrement())
+  departure_id        BigInt
+  province            String              @db.NVarChar(100)
+  fee_amount          Decimal             @default(0, map: "DF__pickup_pr__fee_a__00750D23") @db.Decimal(18, 2)
+  notes               String?             @db.NVarChar(Max)
+  is_active           Boolean             @default(true, map: "DF__pickup_pr__is_ac__0169315C")
+  departure_schedules departure_schedules @relation(fields: [departure_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_pickup_province_fees_departure")
+}
+
+model booking_passengers {
+  id                      BigInt                @id(map: "PK__booking___3213E83FC1E4166E") @default(autoincrement())
+  booking_id              BigInt
+  passenger_type          String                @db.VarChar(20)
+  full_name               String                @db.NVarChar(255)
+  gender                  String?               @db.VarChar(20)
+  date_of_birth           DateTime?             @db.Date
+  phone                   String?               @db.VarChar(20)
+  email                   String?               @db.VarChar(255)
+  id_number               String?               @db.VarChar(50)
+  passport_number         String?               @db.VarChar(50)
+  nationality             String?               @db.NVarChar(100)
+  emergency_contact_name  String?               @db.NVarChar(255)
+  emergency_contact_phone String?               @db.VarChar(20)
+  meal_note               String?               @db.NVarChar(255)
+  health_note             String?               @db.NVarChar(Max)
+  room_preference         String?               @db.NVarChar(100)
+  is_booking_contact      Boolean               @default(false, map: "DF__booking_p__is_bo__4E53A1AA")
+  bookings                bookings              @relation(fields: [booking_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_booking_passengers_booking")
+  passenger_documents     passenger_documents[]
+}
+
+model booking_promotions {
+  booking_id      BigInt
+  promotion_id    BigInt
+  discount_amount Decimal    @default(0, map: "DF__booking_p__disco__55F4C372") @db.Decimal(18, 2)
+  bookings        bookings   @relation(fields: [booking_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_booking_promotions_booking")
+  promotions      promotions @relation(fields: [promotion_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_booking_promotions_promotion")
+
+  @@id([booking_id, promotion_id], map: "PK__booking___FF2830E71683D5AB")
+}
+
+model booking_service_items {
+  id             BigInt   @id(map: "PK__booking___3213E83F13BCFE05") @default(autoincrement())
+  booking_id     BigInt
+  service_type   String   @db.VarChar(30)
+  service_ref_id BigInt?
+  quantity       Int      @default(1, map: "DF__booking_s__quant__16CE6296")
+  unit_price     Decimal  @default(0, map: "DF__booking_s__unit___17C286CF") @db.Decimal(18, 2)
+  total_price    Decimal  @default(0, map: "DF__booking_s__total__18B6AB08") @db.Decimal(18, 2)
+  notes          String?  @db.NVarChar(Max)
+  bookings       bookings @relation(fields: [booking_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_booking_service_items_booking")
+}
+
+model bookings {
+  id                               BigInt                   @id(map: "PK__bookings__3213E83F4F0E99AA") @default(autoincrement())
+  booking_code                     String                   @unique(map: "UQ__bookings__FF29040F96360AF9") @db.VarChar(50)
+  customer_id                      BigInt
+  tour_id                          BigInt
+  departure_id                     BigInt
+  pickup_point_id                  BigInt?
+  promotion_id                     BigInt?
+  booking_status                   String                   @default("PENDING", map: "DF__bookings__bookin__3C34F16F") @db.VarChar(30)
+  contact_name                     String                   @db.NVarChar(255)
+  contact_phone                    String                   @db.VarChar(20)
+  contact_email                    String?                  @db.VarChar(255)
+  adult_count                      Int                      @default(1, map: "DF__bookings__adult___3D2915A8")
+  child_count                      Int                      @default(0, map: "DF__bookings__child___3F115E1A")
+  total_original_amount            Decimal                  @default(0, map: "DF__bookings__total___40F9A68C") @db.Decimal(18, 2)
+  discount_amount                  Decimal                  @default(0, map: "DF__bookings__discou__41EDCAC5") @db.Decimal(18, 2)
+  total_payable_amount             Decimal                  @default(0, map: "DF__bookings__total___42E1EEFE") @db.Decimal(18, 2)
+  reserved_until                   DateTime?
+  special_notes                    String?                  @db.NVarChar(Max)
+  booked_at                        DateTime                 @default(now(), map: "DF__bookings__booked__43D61337")
+  confirmed_at                     DateTime?
+  cancelled_at                     DateTime?
+  completed_at                     DateTime?
+  created_by                       BigInt?
+  updated_by                       BigInt?
+  pickup_service_type              String?                  @db.VarChar(30)
+  pickup_province                  String?                  @db.NVarChar(100)
+  pickup_address                   String?                  @db.NVarChar(Max)
+  pickup_fee_amount                Decimal                  @default(0, map: "DF__bookings__pickup__035179CE") @db.Decimal(18, 2)
+  booking_type                     String                   @default("INDIVIDUAL", map: "DF__bookings__bookin__24B26D99") @db.VarChar(30)
+  booking_passengers               booking_passengers[]
+  booking_promotions               booking_promotions[]
+  booking_service_items            booking_service_items[]
+  users_bookings_created_byTousers users?                   @relation("bookings_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_bookings_created_by")
+  customers                        customers                @relation(fields: [customer_id], references: [id], onUpdate: NoAction, map: "FK_bookings_customer")
+  departure_schedules              departure_schedules      @relation(fields: [departure_id], references: [id], onUpdate: NoAction, map: "FK_bookings_departure")
+  pickup_points                    pickup_points?           @relation(fields: [pickup_point_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_bookings_pickup_point")
+  promotions                       promotions?              @relation(fields: [promotion_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_bookings_promotion")
+  tours                            tours                    @relation(fields: [tour_id], references: [id], onUpdate: NoAction, map: "FK_bookings_tour")
+  users_bookings_updated_byTousers users?                   @relation("bookings_updated_byTousers", fields: [updated_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_bookings_updated_by")
+  cancellation_requests            cancellation_requests[]
+  customer_travel_places           customer_travel_places[]
+  debts                            debts?
+  email_logs                       email_logs[]
+  group_contracts                  group_contracts[]
+  loyalty_transactions             loyalty_transactions[]
+  payments                         payments[]
+  refunds                          refunds[]
+  reviews                          reviews[]
+}
+
+model cancellation_policies {
+  id                        BigInt                      @id(map: "PK__cancella__3213E83FF5453B22") @default(autoincrement())
+  policy_code               String                      @unique(map: "UQ__cancella__F291FB687E3E2F11") @db.VarChar(50)
+  policy_name               String                      @db.NVarChar(255)
+  description               String?                     @db.NVarChar(Max)
+  is_active                 Boolean                     @default(true, map: "DF__cancellat__is_ac__693CA210")
+  created_at                DateTime                    @default(now(), map: "DF__cancellat__creat__6A30C649")
+  cancellation_policy_rules cancellation_policy_rules[]
+  tours                     tours[]
+}
+
+model cancellation_policy_rules {
+  id                         BigInt                @id(map: "PK__cancella__3213E83FC29514FF") @default(autoincrement())
+  policy_id                  BigInt
+  days_before_departure_from Int
+  days_before_departure_to   Int
+  cancellation_fee_percent   Decimal               @default(0, map: "DF__cancellat__cance__6D0D32F4") @db.Decimal(5, 2)
+  refund_percent             Decimal               @default(0, map: "DF__cancellat__refun__6E01572D") @db.Decimal(5, 2)
+  notes                      String?               @db.NVarChar(Max)
+  cancellation_policies      cancellation_policies @relation(fields: [policy_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_cancellation_policy_rules_policy")
+}
+
+model cancellation_requests {
+  id                                              BigInt    @id(map: "PK__cancella__3213E83FDA3CF6E7") @default(autoincrement())
+  booking_id                                      BigInt
+  requested_by                                    BigInt?
+  reason                                          String?   @db.NVarChar(Max)
+  request_status                                  String    @default("PENDING", map: "DF__cancellat__reque__719CDDE7") @db.VarChar(30)
+  requested_at                                    DateTime  @default(now(), map: "DF__cancellat__reque__72910220")
+  processed_at                                    DateTime?
+  processed_by                                    BigInt?
+  bookings                                        bookings  @relation(fields: [booking_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_cancellation_requests_booking")
+  users_cancellation_requests_processed_byTousers users?    @relation("cancellation_requests_processed_byTousers", fields: [processed_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_cancellation_requests_processed_by")
+  users_cancellation_requests_requested_byTousers users?    @relation("cancellation_requests_requested_byTousers", fields: [requested_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_cancellation_requests_requested_by")
+  refunds                                         refunds[]
+}
+
+model customers {
+  id                     BigInt                   @id(map: "PK__customer__3213E83FC167794B") @default(autoincrement())
+  user_id                BigInt?
+  customer_code          String                   @unique(map: "UQ__customer__6A9E4CB765AB98D6") @db.VarChar(50)
+  full_name              String                   @db.NVarChar(255)
+  gender                 String?                  @db.VarChar(20)
+  date_of_birth          DateTime?                @db.Date
+  email                  String?                  @db.VarChar(255)
+  phone                  String?                  @db.VarChar(20)
+  address                String?                  @db.NVarChar(Max)
+  customer_type          String                   @default("INDIVIDUAL", map: "DF__customers__custo__4AB81AF0") @db.VarChar(50)
+  notes                  String?                  @db.NVarChar(Max)
+  created_at             DateTime                 @default(now(), map: "DF__customers__creat__4BAC3F29")
+  updated_at             DateTime                 @default(now(), map: "DF__customers__updat__4CA06362")
+  ai_chat_sessions       ai_chat_sessions[]
+  bookings               bookings[]
+  customer_messages      customer_messages[]
+  customer_travel_places customer_travel_places[]
+  users                  users?                   @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_customers_users")
+  debts                  debts[]
+  email_logs             email_logs[]
+  group_contracts        group_contracts[]
+  loyalty_transactions   loyalty_transactions[]
+  loyalty_wallets        loyalty_wallets?
+  reviews                reviews[]
+}
+
+model debt_transactions {
+  id               BigInt   @id(map: "PK__debt_tra__3213E83FD78D5461") @default(autoincrement())
+  debt_id          BigInt
+  transaction_type String   @db.VarChar(30)
+  amount           Decimal  @default(0, map: "DF__debt_tran__amoun__6BE40491") @db.Decimal(18, 2)
+  description      String?  @db.NVarChar(Max)
+  created_at       DateTime @default(now(), map: "DF__debt_tran__creat__6CD828CA")
+  created_by       BigInt?
+  users            users?   @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_debt_transactions_created_by")
+  debts            debts    @relation(fields: [debt_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_debt_transactions_debt")
+}
+
+model debts {
+  id                BigInt              @id(map: "PK__debts__3213E83FAF18FA48") @default(autoincrement())
+  booking_id        BigInt              @unique(map: "UQ__debts__5DE3A5B0BF778792")
+  customer_id       BigInt
+  total_amount      Decimal             @default(0, map: "DF__debts__total_amo__634EBE90") @db.Decimal(18, 2)
+  paid_amount       Decimal             @default(0, map: "DF__debts__paid_amou__6442E2C9") @db.Decimal(18, 2)
+  remaining_amount  Decimal             @default(0, map: "DF__debts__remaining__65370702") @db.Decimal(18, 2)
+  due_date          DateTime?           @db.Date
+  debt_status       String              @default("UNPAID", map: "DF__debts__debt_stat__662B2B3B") @db.VarChar(30)
+  notes             String?             @db.NVarChar(Max)
+  updated_at        DateTime            @default(now(), map: "DF__debts__updated_a__671F4F74")
+  debt_transactions debt_transactions[]
+  bookings          bookings            @relation(fields: [booking_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_debts_booking")
+  customers         customers           @relation(fields: [customer_id], references: [id], onUpdate: NoAction, map: "FK_debts_customer")
+}
+
+model departure_expenses {
+  id                  BigInt              @id(map: "PK__departur__3213E83F7E46CF9B") @default(autoincrement())
+  departure_id        BigInt
+  category_id         BigInt?
+  supplier_id         BigInt?
+  expense_name        String              @db.NVarChar(255)
+  amount              Decimal             @db.Decimal(18, 2)
+  expense_date        DateTime?           @db.Date
+  notes               String?             @db.NVarChar(Max)
+  created_at          DateTime            @default(now(), map: "DF__departure__creat__32767D0B")
+  created_by          BigInt?
+  expense_categories  expense_categories? @relation(fields: [category_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_departure_expenses_category")
+  users               users?              @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_departure_expenses_created_by")
+  departure_schedules departure_schedules @relation(fields: [departure_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_departure_expenses_departure")
+  suppliers           suppliers?          @relation(fields: [supplier_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_departure_expenses_supplier")
+}
+
+model departure_operation_logs {
+  id                  BigInt              @id(map: "PK__departur__3213E83F1F61716B") @default(autoincrement())
+  departure_id        BigInt
+  log_time            DateTime            @default(now(), map: "DF__departure__log_t__2334397B")
+  log_type            String?             @db.VarChar(50)
+  content             String              @db.NVarChar(Max)
+  created_by          BigInt?
+  users               users?              @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_departure_operation_logs_created_by")
+  departure_schedules departure_schedules @relation(fields: [departure_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_departure_operation_logs_departure")
+}
+
+model departure_operations {
+  id                   BigInt              @id(map: "PK__departur__3213E83F2DD6883D") @default(autoincrement())
+  departure_id         BigInt              @unique(map: "UQ__departur__A25A3FB7E77818D5")
+  operator_employee_id BigInt?
+  operation_status     String              @default("PREPARING", map: "DF__departure__opera__1D7B6025") @db.VarChar(30)
+  notes                String?             @db.NVarChar(Max)
+  updated_at           DateTime            @default(now(), map: "DF__departure__updat__1E6F845E")
+  departure_schedules  departure_schedules @relation(fields: [departure_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_departure_operations_departure")
+  employees            employees?          @relation(fields: [operator_employee_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_departure_operations_employee")
+}
+
+model departure_schedules {
+  id                       BigInt                     @id(map: "PK__departur__3213E83FB4FEC6E9") @default(autoincrement())
+  tour_id                  BigInt
+  departure_code           String                     @unique(map: "UQ__departur__E53EF2702134F019") @db.VarChar(50)
+  start_date               DateTime                   @db.Date
+  end_date                 DateTime                   @db.Date
+  max_seats                Int
+  available_seats          Int
+  booked_seats             Int                        @default(0, map: "DF__departure__booke__2DE6D218")
+  booking_status           String                     @default("OPEN", map: "DF__departure__booki__2FCF1A8A") @db.VarChar(30)
+  guide_id                 BigInt?
+  notes                    String?                    @db.NVarChar(Max)
+  created_at               DateTime                   @default(now(), map: "DF__departure__creat__30C33EC3")
+  updated_at               DateTime                   @default(now(), map: "DF__departure__updat__31B762FC")
+  bookings                 bookings[]
+  departure_expenses       departure_expenses[]
+  departure_operation_logs departure_operation_logs[]
+  departure_operations     departure_operations?
+  tour_guides              tour_guides?               @relation(fields: [guide_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_departure_schedules_guide")
+  tours                    tours                      @relation(fields: [tour_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_departure_schedules_tour")
+  flight_services          flight_services[]
+  group_contracts          group_contracts[]
+  guide_assignments        guide_assignments[]
+  hotel_services           hotel_services[]
+  operation_incidents      operation_incidents[]
+  operation_reports        operation_reports[]
+  pickup_points            pickup_points[]
+  pickup_province_fees     pickup_province_fees[]
+  vehicle_services         vehicle_services[]
+}
+
+model destinations {
+  id                     BigInt                   @id(map: "PK__destinat__3213E83F2BF92FDA") @default(autoincrement())
+  destination_code       String                   @unique(map: "UQ__destinat__7252036777AE8B1A") @db.VarChar(50)
+  destination_name       String                   @db.NVarChar(255)
+  country                String?                  @db.NVarChar(100)
+  city                   String?                  @db.NVarChar(100)
+  destination_type       String?                  @db.VarChar(50)
+  description            String?                  @db.NVarChar(Max)
+  is_active              Boolean                  @default(true, map: "DF__destinati__is_ac__656C112C")
+  latitude               Decimal?                 @db.Decimal(10, 7)
+  longitude              Decimal?                 @db.Decimal(10, 7)
+  map_x                  Decimal?                 @db.Decimal(5, 2)
+  map_y                  Decimal?                 @db.Decimal(5, 2)
+  customer_travel_places customer_travel_places[]
+  tours                  tours[]
+}
+
+model email_logs {
+  id              BigInt           @id(map: "PK__email_lo__3213E83FD2E9E398") @default(autoincrement())
+  booking_id      BigInt?
+  customer_id     BigInt?
+  template_id     BigInt?
+  recipient_email String           @db.VarChar(255)
+  subject         String?          @db.NVarChar(Max)
+  body            String?          @db.NVarChar(Max)
+  send_status     String           @default("PENDING", map: "DF__email_log__send___59904A2C") @db.VarChar(30)
+  sent_at         DateTime?
+  error_message   String?          @db.NVarChar(Max)
+  created_at      DateTime         @default(now(), map: "DF__email_log__creat__5A846E65")
+  bookings        bookings?        @relation(fields: [booking_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_email_logs_booking")
+  customers       customers?       @relation(fields: [customer_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_email_logs_customer")
+  email_templates email_templates? @relation(fields: [template_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_email_logs_template")
+}
+
+model email_templates {
+  id               BigInt       @id(map: "PK__email_te__3213E83F65939E37") @default(autoincrement())
+  template_code    String       @unique(map: "UQ__email_te__F7B8A39DFA50F014") @db.VarChar(50)
+  template_name    String       @db.NVarChar(255)
+  subject_template String       @db.NVarChar(Max)
+  body_template    String       @db.NVarChar(Max)
+  is_active        Boolean      @default(true, map: "DF__email_tem__is_ac__56B3DD81")
+  email_logs       email_logs[]
+}
+
+model employees {
+  id                   BigInt                 @id(map: "PK__employee__3213E83F134C6470") @default(autoincrement())
+  user_id              BigInt                 @unique(map: "UQ__employee__B9BE370ECC651F2E")
+  employee_code        String                 @unique(map: "UQ__employee__B0AA73459E8C4D6E") @db.VarChar(50)
+  department           String?                @db.NVarChar(100)
+  position_name        String?                @db.NVarChar(100)
+  hire_date            DateTime?              @db.Date
+  status               String                 @default("ACTIVE", map: "DF__employees__statu__52593CB8") @db.VarChar(30)
+  created_at           DateTime               @default(now(), map: "DF__employees__creat__534D60F1")
+  updated_at           DateTime               @default(now(), map: "DF__employees__updat__5441852A")
+  gender               String?                @db.NVarChar(10)
+  date_of_birth        DateTime?              @db.Date
+  citizen_id           String?                @db.VarChar(20)
+  address              String?                @db.NVarChar(255)
+  departure_operations departure_operations[]
+  users                users                  @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_employees_users")
+}
+
+model expense_categories {
+  id                 BigInt               @id(map: "PK__expense___3213E83FA21ED140") @default(autoincrement())
+  category_code      String               @unique(map: "UQ__expense___BC9D1E7C583F5954") @db.VarChar(50)
+  category_name      String               @db.NVarChar(150)
+  departure_expenses departure_expenses[]
+}
+
+model flight_services {
+  id                  BigInt              @id(map: "PK__flight_s__3213E83F507BBA5C") @default(autoincrement())
+  departure_id        BigInt
+  supplier_id         BigInt?
+  airline_name        String?             @db.NVarChar(255)
+  flight_number       String?             @db.VarChar(50)
+  departure_airport   String?             @db.NVarChar(255)
+  arrival_airport     String?             @db.NVarChar(255)
+  departure_time      DateTime?
+  arrival_time        DateTime?
+  seat_count          Int?
+  unit_price          Decimal             @default(0, map: "DF__flight_se__unit___05A3D694") @db.Decimal(18, 2)
+  service_status      String              @default("PLANNED", map: "DF__flight_se__servi__0697FACD") @db.VarChar(30)
+  departure_schedules departure_schedules @relation(fields: [departure_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_flight_services_departure")
+  suppliers           suppliers?          @relation(fields: [supplier_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_flight_services_supplier")
+}
+
+model group_contracts {
+  id                   BigInt               @id(map: "PK__group_co__3213E83F889976A9") @default(autoincrement())
+  contract_code        String               @unique(map: "UQ__group_co__68CFBDBAD363EBE4") @db.VarChar(50)
+  customer_id          BigInt?
+  organization_name    String               @db.NVarChar(255)
+  representative_name  String?              @db.NVarChar(255)
+  representative_phone String?              @db.VarChar(20)
+  representative_email String?              @db.VarChar(255)
+  tour_id              BigInt
+  departure_id         BigInt?
+  expected_guest_count Int?
+  contract_value       Decimal              @default(0, map: "DF__group_con__contr__3A179ED3") @db.Decimal(18, 2)
+  payment_terms        String?              @db.NVarChar(Max)
+  cancellation_terms   String?              @db.NVarChar(Max)
+  contract_status      String               @default("DRAFT", map: "DF__group_con__contr__3B0BC30C") @db.VarChar(30)
+  signed_date          DateTime?            @db.Date
+  attached_file_url    String?              @db.NVarChar(Max)
+  created_at           DateTime             @default(now(), map: "DF__group_con__creat__3BFFE745")
+  created_by           BigInt?
+  booking_id           BigInt?
+  bookings             bookings?            @relation(fields: [booking_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_group_contracts_booking")
+  users                users?               @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_group_contracts_created_by")
+  customers            customers?           @relation(fields: [customer_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_group_contracts_customer")
+  departure_schedules  departure_schedules? @relation(fields: [departure_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_group_contracts_departure")
+  tours                tours                @relation(fields: [tour_id], references: [id], onUpdate: NoAction, map: "FK_group_contracts_tour")
+}
+
+model guide_assignments {
+  id                  BigInt              @id(map: "PK__guide_as__3213E83FE750581E") @default(autoincrement())
+  departure_id        BigInt
+  guide_id            BigInt
+  assigned_at         DateTime            @default(now(), map: "DF__guide_ass__assig__28ED12D1")
+  assigned_by         BigInt?
+  notes               String?             @db.NVarChar(Max)
+  users               users?              @relation(fields: [assigned_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_guide_assignments_assigned_by")
+  departure_schedules departure_schedules @relation(fields: [departure_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_guide_assignments_departure")
+  tour_guides         tour_guides         @relation(fields: [guide_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_guide_assignments_guide")
+
+  @@unique([departure_id, guide_id], map: "UQ_guide_assignments")
+}
+
+model hotel_services {
+  id                  BigInt              @id(map: "PK__hotel_se__3213E83F61644906") @default(autoincrement())
+  departure_id        BigInt
+  supplier_id         BigInt?
+  hotel_name          String              @db.NVarChar(255)
+  star_rating         Int?
+  address             String?             @db.NVarChar(Max)
+  room_type           String?             @db.NVarChar(100)
+  room_count          Int?
+  check_in_date       DateTime?           @db.Date
+  check_out_date      DateTime?           @db.Date
+  unit_price          Decimal             @default(0, map: "DF__hotel_ser__unit___11158940") @db.Decimal(18, 2)
+  service_status      String              @default("PLANNED", map: "DF__hotel_ser__servi__1209AD79") @db.VarChar(30)
+  departure_schedules departure_schedules @relation(fields: [departure_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_hotel_services_departure")
+  suppliers           suppliers?          @relation(fields: [supplier_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_hotel_services_supplier")
+}
+
+model itineraries {
+  id             BigInt           @id(map: "PK__itinerar__3213E83FE944FA4E") @default(autoincrement())
+  tour_id        BigInt
+  version_no     Int              @default(1, map: "DF__itinerari__versi__1DB06A4F")
+  title          String           @db.NVarChar(255)
+  notes          String?          @db.NVarChar(Max)
+  is_active      Boolean          @default(true, map: "DF__itinerari__is_ac__1EA48E88")
+  created_at     DateTime         @default(now(), map: "DF__itinerari__creat__1F98B2C1")
+  tours          tours            @relation(fields: [tour_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_itineraries_tour")
+  itinerary_days itinerary_days[]
+}
+
+model itinerary_activities {
+  id               BigInt         @id(map: "PK__itinerar__3213E83FB016C6EA") @default(autoincrement())
+  itinerary_day_id BigInt
+  activity_time    String?        @db.NVarChar(50)
+  activity_title   String         @db.NVarChar(255)
+  location_name    String?        @db.NVarChar(255)
+  description      String?        @db.NVarChar(Max)
+  sort_order       Int            @default(0, map: "DF__itinerary__sort___2739D489")
+  itinerary_days   itinerary_days @relation(fields: [itinerary_day_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_itinerary_activities_day")
+}
+
+model itinerary_days {
+  id                   BigInt                 @id(map: "PK__itinerar__3213E83F42330B9C") @default(autoincrement())
+  itinerary_id         BigInt
+  day_no               Int
+  title                String?                @db.NVarChar(255)
+  description          String?                @db.NVarChar(Max)
+  overnight_location   String?                @db.NVarChar(255)
+  itinerary_activities itinerary_activities[]
+  itineraries          itineraries            @relation(fields: [itinerary_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_itinerary_days_itinerary")
+
+  @@unique([itinerary_id, day_no], map: "UQ_itinerary_days")
+}
+
+model notifications {
+  id                BigInt   @id(map: "PK__notifica__3213E83F3C3F25E7") @default(autoincrement())
+  user_id           BigInt
+  title             String   @db.NVarChar(255)
+  content           String   @db.NVarChar(Max)
+  notification_type String?  @db.VarChar(50)
+  is_read           Boolean  @default(false, map: "DF__notificat__is_re__603D47BB")
+  created_at        DateTime @default(now(), map: "DF__notificat__creat__61316BF4")
+  users             users    @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_notifications_user")
+}
+
+model passenger_documents {
+  id                   BigInt             @id(map: "PK__passenge__3213E83FCDCF9AC6") @default(autoincrement())
+  booking_passenger_id BigInt
+  document_type        String             @db.VarChar(50)
+  document_number      String?            @db.VarChar(100)
+  issue_date           DateTime?          @db.Date
+  expiry_date          DateTime?          @db.Date
+  file_url             String?            @db.NVarChar(Max)
+  status               String             @default("PENDING", map: "DF__passenger__statu__5224328E") @db.VarChar(30)
+  notes                String?            @db.NVarChar(Max)
+  booking_passengers   booking_passengers @relation(fields: [booking_passenger_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_passenger_documents_passenger")
+}
+
+model payments {
+  id               BigInt    @id(map: "PK__payments__3213E83F176CCF19") @default(autoincrement())
+  booking_id       BigInt
+  payment_code     String    @unique(map: "UQ__payments__7234C6E313CAEDAB") @db.VarChar(50)
+  payment_method   String    @db.VarChar(50)
+  amount           Decimal   @db.Decimal(18, 2)
+  payment_status   String    @default("PENDING", map: "DF__payments__paymen__5CA1C101") @db.VarChar(30)
+  transaction_code String?   @db.VarChar(100)
+  proof_url        String?   @db.NVarChar(Max)
+  paid_at          DateTime?
+  created_at       DateTime  @default(now(), map: "DF__payments__create__5D95E53A")
+  created_by       BigInt?
+  payment_type     String    @default("FULL_PAYMENT", map: "DF__payments__paymen__269AB60B") @db.VarChar(30)
+  bookings         bookings  @relation(fields: [booking_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_payments_booking")
+  users            users?    @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_payments_created_by")
+}
+
+model permissions {
+  id               BigInt             @id(map: "PK__permissi__3213E83FE6874ED5") @default(autoincrement())
+  code             String             @unique(map: "UQ__permissi__357D4CF972EED91D") @db.VarChar(100)
+  name             String             @db.NVarChar(150)
+  module_name      String?            @db.VarChar(100)
+  description      String?            @db.NVarChar(Max)
+  role_permissions role_permissions[]
+}
+
+model pickup_points {
+  id                  BigInt              @id(map: "PK__pickup_p__3213E83F36E20437") @default(autoincrement())
+  departure_id        BigInt
+  point_type          String              @db.VarChar(20)
+  point_name          String              @db.NVarChar(255)
+  address             String              @db.NVarChar(Max)
+  province            String?             @db.NVarChar(100)
+  pickup_time         DateTime?
+  dropoff_time        DateTime?
+  notes               String?             @db.NVarChar(Max)
+  is_active           Boolean             @default(true, map: "DF__pickup_po__is_ac__37703C52")
+  bookings            bookings[]
+  departure_schedules departure_schedules @relation(fields: [departure_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_pickup_points_departure")
+}
+
+model promotion_tours {
+  promotion_id BigInt
+  tour_id      BigInt
+  promotions   promotions @relation(fields: [promotion_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_promotion_tours_promotion")
+  tours        tours      @relation(fields: [tour_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_promotion_tours_tour")
+
+  @@id([promotion_id, tour_id], map: "PK__promotio__58083EF5C0D730BD")
+}
+
+model promotions {
+  id                  BigInt               @id(map: "PK__promotio__3213E83F07A20AE4") @default(autoincrement())
+  promotion_code      String               @unique(map: "UQ__promotio__88875505C124DF15") @db.VarChar(50)
+  promotion_name      String               @db.NVarChar(255)
+  promotion_type      String               @db.VarChar(30)
+  discount_value      Decimal              @db.Decimal(18, 2)
+  min_order_amount    Decimal              @default(0, map: "DF__promotion__min_o__14270015") @db.Decimal(18, 2)
+  max_discount_amount Decimal?             @db.Decimal(18, 2)
+  usage_limit         Int?
+  used_count          Int                  @default(0, map: "DF__promotion__used___151B244E")
+  start_at            DateTime
+  end_at              DateTime
+  status              String               @default("ACTIVE", map: "DF__promotion__statu__160F4887") @db.VarChar(30)
+  description         String?              @db.NVarChar(Max)
+  banner_image_url    String?
+  thumbnail_image_url String?
+  highlight_title     String?              @db.NVarChar(255)
+  highlight_subtitle  String?              @db.NVarChar(Max)
+  terms_conditions    String?              @db.NVarChar(Max)
+  usage_guide         String?              @db.NVarChar(Max)
+  theme_color         String?              @db.VarChar(20)
+  is_featured         Boolean              @default(false, map: "DF__promotion__is_fe__324172E1")
+  booking_promotions  booking_promotions[]
+  bookings            bookings[]
+  promotion_tours     promotion_tours[]
+}
+
+model refunds {
+  id                      BigInt                 @id(map: "PK__refunds__3213E83F204AB678") @default(autoincrement())
+  booking_id              BigInt
+  cancellation_request_id BigInt?
+  refund_code             String                 @unique(map: "UQ__refunds__E50BA792FD7BFC8D") @db.VarChar(50)
+  refund_amount           Decimal                @default(0, map: "DF__refunds__refund___793DFFAF") @db.Decimal(18, 2)
+  cancellation_fee_amount Decimal                @default(0, map: "DF__refunds__cancell__7A3223E8") @db.Decimal(18, 2)
+  refund_status           String                 @default("PENDING", map: "DF__refunds__refund___7B264821") @db.VarChar(30)
+  refund_method           String?                @db.VarChar(50)
+  refund_at               DateTime?
+  notes                   String?                @db.NVarChar(Max)
+  created_at              DateTime               @default(now(), map: "DF__refunds__created__7C1A6C5A")
+  bookings                bookings               @relation(fields: [booking_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_refunds_booking")
+  cancellation_requests   cancellation_requests? @relation(fields: [cancellation_request_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_refunds_cancellation_request")
+}
+
+model reviews {
+  id                BigInt          @id(map: "PK__reviews__3213E83F52CD0598") @default(autoincrement())
+  booking_id        BigInt
+  customer_id       BigInt
+  tour_id           BigInt
+  rating            Int
+  review_title      String?         @db.NVarChar(255)
+  review_content    String?         @db.NVarChar(Max)
+  is_public         Boolean         @default(false, map: "DF__reviews__is_publ__43A1090D")
+  moderation_status String          @default("PENDING", map: "DF__reviews__moderat__44952D46") @db.VarChar(30)
+  created_at        DateTime        @default(now(), map: "DF__reviews__created__4589517F")
+  review_images     review_images[]
+  bookings          bookings        @relation(fields: [booking_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_reviews_booking")
+  customers         customers       @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_reviews_customer")
+  tours             tours           @relation(fields: [tour_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_reviews_tour")
+}
+
+model role_permissions {
+  role_id       BigInt
+  permission_id BigInt
+  permissions   permissions @relation(fields: [permission_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_role_permissions_permissions")
+  roles         roles       @relation(fields: [role_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_role_permissions_roles")
+
+  @@id([role_id, permission_id], map: "PK__role_per__C85A5463B14B3241")
+}
+
+model roles {
+  id               BigInt             @id(map: "PK__roles__3213E83F3CD1BC0D") @default(autoincrement())
+  code             String             @unique(map: "UQ__roles__357D4CF97E98329A") @db.VarChar(50)
+  name             String             @db.NVarChar(100)
+  description      String?            @db.NVarChar(Max)
+  role_permissions role_permissions[]
+  users            users[]
+}
+
+model suppliers {
+  id                 BigInt               @id(map: "PK__supplier__3213E83F18295D7E") @default(autoincrement())
+  supplier_code      String               @unique(map: "UQ__supplier__A82CE469BC5AC5FA") @db.VarChar(50)
+  supplier_name      String               @db.NVarChar(255)
+  supplier_type      String               @db.VarChar(50)
+  contact_name       String?              @db.NVarChar(255)
+  phone              String?              @db.VarChar(20)
+  email              String?              @db.VarChar(255)
+  address            String?              @db.NVarChar(Max)
+  tax_code           String?              @db.VarChar(50)
+  notes              String?              @db.NVarChar(Max)
+  is_active          Boolean              @default(true, map: "DF__suppliers__is_ac__01D345B0")
+  created_at         DateTime             @default(now(), map: "DF__suppliers__creat__02C769E9")
+  departure_expenses departure_expenses[]
+  flight_services    flight_services[]
+  hotel_services     hotel_services[]
+  vehicle_services   vehicle_services[]
+}
+
+model tour_categories {
+  id            BigInt  @id(map: "PK__tour_cat__3213E83F31960225") @default(autoincrement())
+  category_code String  @unique(map: "UQ__tour_cat__BC9D1E7CAFA1986E") @db.VarChar(50)
+  category_name String  @db.NVarChar(150)
+  description   String? @db.NVarChar(Max)
+  is_active     Boolean @default(true, map: "DF__tour_cate__is_ac__619B8048")
+  tours         tours[]
+}
+
+model tour_guides {
+  id                  BigInt                @id(map: "PK__tour_gui__3213E83FA18530CA") @default(autoincrement())
+  user_id             BigInt                @unique(map: "UQ__tour_gui__B9BE370EF39C4BB6")
+  guide_code          String                @unique(map: "UQ__tour_gui__29A67E3CA377A49C") @db.VarChar(50)
+  region              String?               @db.NVarChar(100)
+  languages           String?               @db.NVarChar(Max)
+  experience_years    Int                   @default(0, map: "DF__tour_guid__exper__59FA5E80")
+  status              String                @default("ACTIVE", map: "DF__tour_guid__statu__5AEE82B9") @db.VarChar(30)
+  created_at          DateTime              @default(now(), map: "DF__tour_guid__creat__5BE2A6F2")
+  updated_at          DateTime              @default(now(), map: "DF__tour_guid__updat__5CD6CB2B")
+  departure_schedules departure_schedules[]
+  guide_assignments   guide_assignments[]
+  users               users                 @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_tour_guides_users")
+}
+
+model tour_images {
+  id         BigInt  @id(map: "PK__tour_ima__3213E83FE8A27F28") @default(autoincrement())
+  tour_id    BigInt
+  image_url  String  @db.NVarChar(Max)
+  sort_order Int     @default(0, map: "DF__tour_imag__sort___02FC7413")
+  is_cover   Boolean @default(false, map: "DF__tour_imag__is_co__03F0984C")
+  tours      tours   @relation(fields: [tour_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_tour_images_tour")
+}
+
+model tour_required_documents {
+  id            BigInt  @id(map: "PK__tour_req__3213E83FFC5FBE69") @default(autoincrement())
+  tour_id       BigInt
+  document_name String  @db.NVarChar(150)
+  is_required   Boolean @default(true, map: "DF__tour_requ__is_re__0E6E26BF")
+  description   String? @db.NVarChar(Max)
+  tours         tours   @relation(fields: [tour_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_tour_required_documents_tour")
+}
+
+model tour_tag_map {
+  tour_id   BigInt
+  tag_id    BigInt
+  tour_tags tour_tags @relation(fields: [tag_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_tour_tag_map_tag")
+  tours     tours     @relation(fields: [tour_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_tour_tag_map_tour")
+
+  @@id([tour_id, tag_id], map: "PK__tour_tag__3F3FD3CD1AE82D4D")
+}
+
+model tour_tags {
+  id           BigInt         @id(map: "PK__tour_tag__3213E83F935E4063") @default(autoincrement())
+  tag_name     String         @unique(map: "UQ__tour_tag__E298655CA932F09D") @db.NVarChar(100)
+  tour_tag_map tour_tag_map[]
+}
+
+model tours {
+  id                            BigInt                    @id(map: "PK__tours__3213E83F739DDED8") @default(autoincrement())
+  category_id                   BigInt?
+  destination_id                BigInt?
+  cancellation_policy_id        BigInt?
+  tour_code                     String                    @unique(map: "UQ__tours__824985793383FBD8") @db.VarChar(50)
+  tour_name                     String                    @db.NVarChar(255)
+  slug                          String?                   @unique(map: "UQ__tours__32DD1E4C66E4253A") @db.VarChar(255)
+  tour_type                     String                    @db.VarChar(50)
+  duration_days                 Int
+  duration_nights               Int                       @default(0, map: "DF__tours__duration___73BA3083")
+  transport_type                String?                   @db.NVarChar(100)
+  base_price                    Decimal                   @db.Decimal(18, 2)
+  child_price                   Decimal                   @default(0, map: "DF__tours__child_pri__75A278F5") @db.Decimal(18, 2)
+  max_capacity                  Int
+  short_description             String?                   @db.NVarChar(Max)
+  description                   String?                   @db.NVarChar(Max)
+  featured_image_url            String?                   @db.NVarChar(Max)
+  included_services             String?                   @db.NVarChar(Max)
+  excluded_services             String?                   @db.NVarChar(Max)
+  status                        String                    @default("DRAFT", map: "DF__tours__status__787EE5A0") @db.VarChar(30)
+  is_featured                   Boolean                   @default(false, map: "DF__tours__is_featur__797309D9")
+  created_by                    BigInt?
+  updated_by                    BigInt?
+  created_at                    DateTime                  @default(now(), map: "DF__tours__created_a__7A672E12")
+  updated_at                    DateTime                  @default(now(), map: "DF__tours__updated_a__7B5B524B")
+  bookings                      bookings[]
+  departure_schedules           departure_schedules[]
+  favorites                     favorites[]
+  group_contracts               group_contracts[]
+  itineraries                   itineraries[]
+  promotion_tours               promotion_tours[]
+  reviews                       reviews[]
+  tour_images                   tour_images[]
+  tour_required_documents       tour_required_documents[]
+  tour_tag_map                  tour_tag_map[]
+  cancellation_policies         cancellation_policies?    @relation(fields: [cancellation_policy_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_tours_cancellation_policy")
+  tour_categories               tour_categories?          @relation(fields: [category_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_tours_category")
+  users_tours_created_byTousers users?                    @relation("tours_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_tours_created_by")
+  destinations                  destinations?             @relation(fields: [destination_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_tours_destination")
+  users_tours_updated_byTousers users?                    @relation("tours_updated_byTousers", fields: [updated_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_tours_updated_by")
+}
+
+model users {
+  id                                                              BigInt                     @id(map: "PK__users__3213E83F00F6D4B5") @default(autoincrement())
+  role_id                                                         BigInt
+  email                                                           String?                    @unique(map: "UQ__users__AB6E6164A02E089A") @db.VarChar(255)
+  phone                                                           String?                    @unique(map: "UQ__users__B43B145F53E16A53") @db.VarChar(20)
+  password_hash                                                   String                     @db.NVarChar(Max)
+  full_name                                                       String                     @db.NVarChar(255)
+  avatar_url                                                      String?                    @db.NVarChar(Max)
+  status                                                          String                     @default("ACTIVE", map: "DF__users__status__4316F928") @db.VarChar(30)
+  last_login_at                                                   DateTime?
+  created_at                                                      DateTime                   @default(now(), map: "DF__users__created_a__440B1D61")
+  updated_at                                                      DateTime                   @default(now(), map: "DF__users__updated_a__44FF419A")
+  articles                                                        articles[]
+  audit_logs                                                      audit_logs[]
+  bookings_bookings_created_byTousers                             bookings[]                 @relation("bookings_created_byTousers")
+  bookings_bookings_updated_byTousers                             bookings[]                 @relation("bookings_updated_byTousers")
+  cancellation_requests_cancellation_requests_processed_byTousers cancellation_requests[]    @relation("cancellation_requests_processed_byTousers")
+  cancellation_requests_cancellation_requests_requested_byTousers cancellation_requests[]    @relation("cancellation_requests_requested_byTousers")
+  customers                                                       customers[]
+  debt_transactions                                               debt_transactions[]
+  departure_expenses                                              departure_expenses[]
+  departure_operation_logs                                        departure_operation_logs[]
+  email_otps                                                      email_otps[]
+  employees                                                       employees?
+  favorites                                                       favorites[]
+  group_contracts                                                 group_contracts[]
+  guide_assignments                                               guide_assignments[]
+  notifications                                                   notifications[]
+  operation_incidents                                             operation_incidents[]
+  payments                                                        payments[]
+  tour_guides                                                     tour_guides?
+  tours_tours_created_byTousers                                   tours[]                    @relation("tours_created_byTousers")
+  tours_tours_updated_byTousers                                   tours[]                    @relation("tours_updated_byTousers")
+  roles                                                           roles                      @relation(fields: [role_id], references: [id], onUpdate: NoAction, map: "FK_users_roles")
+}
+
+model vehicle_services {
+  id                  BigInt              @id(map: "PK__vehicle___3213E83F301893F2") @default(autoincrement())
+  departure_id        BigInt
+  supplier_id         BigInt?
+  vehicle_type        String?             @db.NVarChar(100)
+  vehicle_number      String?             @db.VarChar(50)
+  seat_count          Int?
+  departure_time      DateTime?
+  pickup_location     String?             @db.NVarChar(Max)
+  service_status      String              @default("PLANNED", map: "DF__vehicle_s__servi__0B5CAFEA") @db.VarChar(30)
+  unit_price          Decimal             @default(0, map: "DF__vehicle_s__unit___0C50D423") @db.Decimal(18, 2)
+  departure_schedules departure_schedules @relation(fields: [departure_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_vehicle_services_departure")
+  suppliers           suppliers?          @relation(fields: [supplier_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_vehicle_services_supplier")
+}
+
+model favorites {
+  id         BigInt    @id(map: "PK__favorite__3213E83F033A1FD6") @default(autoincrement())
+  user_id    BigInt
+  tour_id    BigInt
+  created_at DateTime? @default(now(), map: "DF__favorites__creat__7BE56230")
+  tours      tours     @relation(fields: [tour_id], references: [id], onUpdate: NoAction, map: "FK_favorites_tour")
+  users      users     @relation(fields: [user_id], references: [id], onUpdate: NoAction, map: "FK_favorites_user")
+
+  @@unique([user_id, tour_id], map: "UQ_user_tour")
+}
+
+model customer_messages {
+  id              BigInt    @id(map: "PK__customer__3213E83F5AA5D396") @default(autoincrement())
+  customer_id     BigInt
+  sender_type     String    @db.VarChar(20)
+  message_content String    @db.NVarChar(Max)
+  is_read         Boolean   @default(false, map: "DF__customer___is_re__13BCEBC1")
+  created_at      DateTime  @default(now(), map: "DF__customer___creat__14B10FFA")
+  customers       customers @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_customer_messages_customer")
+}
+
+model operation_incidents {
+  id                  BigInt               @id(map: "PK__operatio__3213E83FC399275B") @default(autoincrement())
+  dispatch_id         BigInt?
+  departure_id        BigInt?
+  incident_code       String               @unique(map: "UQ__operatio__6B65846241EAC56D") @db.VarChar(50)
+  incident_type       String               @db.VarChar(50)
+  priority_level      String               @default("NORMAL", map: "DF__operation__prior__26CFC035") @db.VarChar(30)
+  title               String               @db.NVarChar(255)
+  description         String?              @db.NVarChar(Max)
+  incident_status     String               @default("OPEN", map: "DF__operation__incid__27C3E46E") @db.VarChar(30)
+  handled_action      String?              @db.NVarChar(Max)
+  reported_at         DateTime             @default(now(), map: "DF__operation__repor__28B808A7")
+  resolved_at         DateTime?
+  created_by          BigInt?
+  users               users?               @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_operation_incidents_created_by")
+  departure_schedules departure_schedules? @relation(fields: [departure_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_operation_incidents_departure")
+}
+
+model operation_reports {
+  id                  BigInt              @id(map: "PK__operatio__3213E83F5846CD6B") @default(autoincrement())
+  departure_id        BigInt
+  report_status       String              @db.NVarChar(50)
+  current_location    String?             @db.NVarChar(255)
+  content             String              @db.NVarChar(Max)
+  present_count       Int                 @default(0, map: "DF__operation__prese__0E04126B")
+  absent_count        Int                 @default(0, map: "DF__operation__absen__0EF836A4")
+  created_at          DateTime            @default(now(), map: "DF__operation__creat__0FEC5ADD")
+  issue_type          String?             @db.NVarChar(100)
+  priority_level      String?             @db.NVarChar(50)
+  handled_action      String?             @db.NVarChar(Max)
+  next_action         String?             @db.NVarChar(Max)
+  departure_schedules departure_schedules @relation(fields: [departure_id], references: [id], onUpdate: NoAction, map: "FK_operation_reports_departure")
+}
+
+model review_images {
+  id         BigInt    @id(map: "PK__review_i__3213E83F6DDEECEF") @default(autoincrement())
+  review_id  BigInt
+  image_url  String    @db.NVarChar(500)
+  sort_order Int?      @default(1, map: "DF__review_im__sort___00AA174D")
+  created_at DateTime? @default(now(), map: "DF__review_im__creat__019E3B86")
+  reviews    reviews   @relation(fields: [review_id], references: [id], onUpdate: NoAction, map: "FK_review_images_reviews")
+}
+
+model loyalty_rules {
+  id               BigInt   @id(map: "PK__loyalty___3213E83FF5A68D2F") @default(autoincrement())
+  rule_name        String   @db.NVarChar(100)
+  earn_rate        Decimal  @default(0, map: "DF__loyalty_r__earn___54968AE5") @db.Decimal(18, 2)
+  min_order_amount Decimal  @default(0, map: "DF__loyalty_r__min_o__558AAF1E") @db.Decimal(18, 2)
+  status           String   @default("ACTIVE", map: "DF__loyalty_r__statu__567ED357") @db.VarChar(30)
+  created_at       DateTime @default(now(), map: "DF__loyalty_r__creat__5772F790")
+}
+
+model loyalty_transactions {
+  id               BigInt    @id(map: "PK__loyalty___3213E83F4A7F0389") @default(autoincrement())
+  customer_id      BigInt
+  booking_id       BigInt?
+  transaction_type String    @db.VarChar(30)
+  points           Int
+  description      String?   @db.NVarChar(255)
+  created_at       DateTime  @default(now(), map: "DF__loyalty_t__creat__4FD1D5C8")
+  point_status     String    @default("PENDING", map: "DF__loyalty_t__point__58671BC9") @db.VarChar(30)
+  bookings         bookings? @relation(fields: [booking_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_loyalty_transactions_booking")
+  customers        customers @relation(fields: [customer_id], references: [id], onUpdate: NoAction, map: "FK_loyalty_transactions_customer")
+}
+
+model loyalty_wallets {
+  id            BigInt    @id(map: "PK__loyalty___3213E83F4B8689DE") @default(autoincrement())
+  customer_id   BigInt    @unique(map: "UQ__loyalty___CD65CB84DFBFB536")
+  point_balance Int       @default(0, map: "DF__loyalty_w__point__4830B400")
+  total_earned  Int       @default(0, map: "DF__loyalty_w__total__4924D839")
+  total_used    Int       @default(0, map: "DF__loyalty_w__total__4A18FC72")
+  created_at    DateTime  @default(now(), map: "DF__loyalty_w__creat__4B0D20AB")
+  updated_at    DateTime  @default(now(), map: "DF__loyalty_w__updat__4C0144E4")
+  customers     customers @relation(fields: [customer_id], references: [id], onUpdate: NoAction, map: "FK_loyalty_wallets_customer")
+}
+
+model customer_travel_places {
+  id                         BigInt       @id(map: "PK__customer__3213E83F7844CDB2") @default(autoincrement())
+  customer_id                BigInt
+  destination_id             BigInt
+  first_completed_booking_id BigInt?
+  visited_at                 DateTime     @default(now(), map: "DF__customer___visit__6F4A8121")
+  bookings                   bookings?    @relation(fields: [first_completed_booking_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_customer_travel_places_booking")
+  customers                  customers    @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_customer_travel_places_customer")
+  destinations               destinations @relation(fields: [destination_id], references: [id], onUpdate: NoAction, map: "FK_customer_travel_places_destination")
+
+  @@unique([customer_id, destination_id], map: "UQ_customer_travel_places")
+}
+
+model email_otps {
+  id          BigInt    @id(map: "PK__email_ot__3213E83F067B4386") @default(autoincrement())
+  user_id     BigInt?
+  email       String    @db.VarChar(255)
+  otp_code    String    @db.VarChar(10)
+  purpose     String    @db.VarChar(50)
+  expires_at  DateTime
+  verified_at DateTime?
+  created_at  DateTime  @default(now(), map: "DF__email_otp__creat__1387E197")
+  users       users?    @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_email_otps_users")
+}
