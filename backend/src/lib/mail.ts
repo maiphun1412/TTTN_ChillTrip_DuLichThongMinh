@@ -24,6 +24,12 @@ export async function sendOtpEmail({
       ? "Xác thực tài khoản ChillTrip"
       : "Đặt lại mật khẩu ChillTrip";
 
+  // Chưa cấu hình SMTP (môi trường dev): in OTP ra terminal thay vì gửi mail
+  if (!process.env.SMTP_HOST && process.env.NODE_ENV !== "production") {
+    console.log(`[DEV] ${subject} - OTP cho ${to}: ${otp}`);
+    return;
+  }
+
   await transporter.sendMail({
     from: process.env.SMTP_FROM || process.env.SMTP_USER,
     to,
