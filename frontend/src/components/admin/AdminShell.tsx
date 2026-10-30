@@ -1,6 +1,6 @@
 "use client";
 
-import { ReactNode } from "react";
+import { ReactNode, useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutDashboard,
@@ -51,9 +51,75 @@ const menuItems = [
   { label: "Quản lý blog", icon: FileText, href: "/admin/articles" },
 ];
 
+type AdminProfile = {
+  fullName: string;
+  roleName: string;
+};
+
+function getInitials(name: string) {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return "AD";
+  const first = words[0][0] ?? "";
+  const last = words.length > 1 ? words[words.length - 1][0] ?? "" : "";
+  return (first + last).toUpperCase();
+}
+
 export default function AdminShell({ children }: AdminShellProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const [profile, setProfile] = useState<AdminProfile | null>(null);
+
+  // Hỏi backend người đang đăng nhập thật sự là ai (role lấy từ database),
+  // không dựa vào "user" lưu trong localStorage vì ai cũng sửa được.
+  useEffect(() => {
+    let cancelled = false;
+
+    async function checkAdmin() {
+      const token =
+        localStorage.getItem("access_token") ||
+        sessionStorage.getItem("access_token");
+
+      try {
+        const res = await fetch("/backend-api/auth/me", {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+          cache: "no-store",
+        });
+
+        if (cancelled) return;
+
+        if (res.status === 401) {
+          router.replace("/login");
+          return;
+        }
+
+        const json = await res.json();
+        const user = json?.data?.user;
+
+        if (
+          !res.ok ||
+          !user ||
+          user.status !== "ACTIVE" ||
+          user.role?.code !== "ADMIN"
+        ) {
+          router.replace("/");
+          return;
+        }
+
+        setProfile({
+          fullName: user.fullName || "Quản trị viên",
+          roleName: user.role?.name || "Quản trị hệ thống",
+        });
+      } catch {
+        if (!cancelled) router.replace("/login");
+      }
+    }
+
+    checkAdmin();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
 
   function handleLogout() {
     const ok = window.confirm("Bạn có chắc muốn đăng xuất không?");
@@ -71,6 +137,14 @@ export default function AdminShell({ children }: AdminShellProps) {
 
     router.replace("/login");
     router.refresh();
+  }
+
+  if (!profile) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#f6fafb] text-sm text-[#3e494b]">
+        Đang kiểm tra quyền truy cập…
+      </div>
+    );
   }
 
   return (
@@ -153,14 +227,16 @@ export default function AdminShell({ children }: AdminShellProps) {
 
               <div className="flex items-center gap-3 border-l border-[#6e797b]/30 pl-4">
                 <div className="hidden text-right sm:block">
-                  <p className="text-xs font-bold text-[#181c1d]">Admin User</p>
+                  <p className="text-xs font-bold text-[#181c1d]">
+                    {profile.fullName}
+                  </p>
                   <p className="text-[10px] text-[#3e494b]">
-                    Quản trị hệ thống
+                    {profile.roleName}
                   </p>
                 </div>
 
                 <div className="flex h-10 w-10 items-center justify-center rounded-full border-2 border-[#007b8a] bg-white text-xs font-bold text-[#007B8A]">
-                  AD
+                  {getInitials(profile.fullName)}
                 </div>
               </div>
             </div>

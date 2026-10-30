@@ -27,7 +27,7 @@ export async function GET(
   req: Request,
   context: { params: Promise<{ id: string }> }
 ) {
-  const auth = requireRole(req, ["ADMIN"]);
+  const auth = await requireRole(req, ["ADMIN"]);
   if (!auth.ok) {
     return fail(
       auth.reason === "UNAUTHORIZED" ? "Chưa đăng nhập" : "Không có quyền",
@@ -62,7 +62,7 @@ export async function PUT(
   req: Request,
   context: { params: Promise<{ id: string }> }
 ) {
-  const auth = requireRole(req, ["ADMIN"]);
+  const auth = await requireRole(req, ["ADMIN"]);
   if (!auth.ok) {
     return fail(
       auth.reason === "UNAUTHORIZED" ? "Chưa đăng nhập" : "Không có quyền",
@@ -136,7 +136,7 @@ export async function DELETE(
   req: Request,
   context: { params: Promise<{ id: string }> }
 ) {
-  const auth = requireRole(req, ["ADMIN"]);
+  const auth = await requireRole(req, ["ADMIN"]);
   if (!auth.ok) {
     return fail(
       auth.reason === "UNAUTHORIZED" ? "Chưa đăng nhập" : "Không có quyền",

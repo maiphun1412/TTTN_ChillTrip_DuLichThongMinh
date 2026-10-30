@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { fail } from "@/lib/api-response";
+import { requireRole } from "@/lib/permissions";
 
 function serialize(data: any) {
   return JSON.parse(
@@ -13,6 +15,14 @@ export async function GET(
   req: Request,
   context: { params: Promise<{ id: string }> }
 ) {
+  const auth = await requireRole(req, ["ADMIN"]);
+  if (!auth.ok) {
+    return fail(
+      auth.reason === "UNAUTHORIZED" ? "Chưa đăng nhập" : "Không có quyền",
+      auth.reason === "UNAUTHORIZED" ? 401 : 403
+    );
+  }
+
   try {
     const { id } = await context.params;
     const customerId = Number(id);
@@ -93,6 +103,14 @@ export async function PUT(
   req: Request,
   context: { params: Promise<{ id: string }> }
 ) {
+  const auth = await requireRole(req, ["ADMIN"]);
+  if (!auth.ok) {
+    return fail(
+      auth.reason === "UNAUTHORIZED" ? "Chưa đăng nhập" : "Không có quyền",
+      auth.reason === "UNAUTHORIZED" ? 401 : 403
+    );
+  }
+
   try {
     const { id } = await context.params;
     const customerId = Number(id);
@@ -169,6 +187,14 @@ export async function DELETE(
   req: Request,
   context: { params: Promise<{ id: string }> }
 ) {
+  const auth = await requireRole(req, ["ADMIN"]);
+  if (!auth.ok) {
+    return fail(
+      auth.reason === "UNAUTHORIZED" ? "Chưa đăng nhập" : "Không có quyền",
+      auth.reason === "UNAUTHORIZED" ? 401 : 403
+    );
+  }
+
   try {
     const { id } = await context.params;
     const customerId = Number(id);

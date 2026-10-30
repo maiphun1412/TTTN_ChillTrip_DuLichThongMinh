@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { fail } from "@/lib/api-response";
+import { requireRole } from "@/lib/permissions";
 
 function serialize(data: any) {
   return JSON.parse(
@@ -14,6 +16,14 @@ function escapeSql(value: string) {
 }
 
 export async function GET(req: NextRequest) {
+  const auth = await requireRole(req, ["ADMIN"]);
+  if (!auth.ok) {
+    return fail(
+      auth.reason === "UNAUTHORIZED" ? "Chưa đăng nhập" : "Không có quyền",
+      auth.reason === "UNAUTHORIZED" ? 401 : 403
+    );
+  }
+
   try {
     const { searchParams } = new URL(req.url);
 
@@ -91,6 +101,14 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: Request) {
+  const auth = await requireRole(req, ["ADMIN"]);
+  if (!auth.ok) {
+    return fail(
+      auth.reason === "UNAUTHORIZED" ? "Chưa đăng nhập" : "Không có quyền",
+      auth.reason === "UNAUTHORIZED" ? 401 : 403
+    );
+  }
+
   try {
     const body = await req.json();
 

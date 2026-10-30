@@ -1,4 +1,5 @@
 import { verifyAccessToken, type JwtPayload } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
 
 export function getTokenFromRequest(req: Request) {
   const authHeader = req.headers.get("authorization");
@@ -31,7 +32,10 @@ export function requireAuth(req: Request): JwtPayload | null {
   return verifyAccessToken(token);
 }
 
-export function requireRole(req: Request, roles: string[]) {
+// Token chỉ dùng để biết "ai đang gọi". Role và trạng thái tài khoản
+// luôn lấy lại từ database, vì token có hạn 7 ngày và có thể đã cũ
+// (bị hạ quyền, bị khóa, bị xóa sau khi đăng nhập).
+export async function requireRole(req: Request, roles: string[]) {
   const auth = requireAuth(req);
 
   if (!auth) {
@@ -41,7 +45,32 @@ export function requireRole(req: Request, roles: string[]) {
     };
   }
 
-  if (!roles.includes(auth.roleCode)) {
+  let userId: bigint;
+
+  try {
+    userId = BigInt(auth.userId);
+  } catch {
+    return {
+      ok: false as const,
+      reason: "UNAUTHORIZED" as const,
+    };
+  }
+
+  const user = await prisma.users.findUnique({
+    where: { id: userId },
+    select: { status: true, roles: { select: { code: true } } },
+  });
+
+  if (!user || user.status !== "ACTIVE") {
+    return {
+      ok: false as const,
+      reason: "UNAUTHORIZED" as const,
+    };
+  }
+
+  const roleCode = user.roles?.code ?? "";
+
+  if (!roles.includes(roleCode)) {
     return {
       ok: false as const,
       reason: "FORBIDDEN" as const,
@@ -50,6 +79,6 @@ export function requireRole(req: Request, roles: string[]) {
 
   return {
     ok: true as const,
-    user: auth,
+    user: { ...auth, roleCode },
   };
 }

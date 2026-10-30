@@ -11,7 +11,7 @@ function serialize<T>(data: T): T {
 }
 
 export async function GET(req: Request) {
-  const auth = requireRole(req, ["ADMIN"]);
+  const auth = await requireRole(req, ["ADMIN"]);
   if (!auth.ok) {
     return fail(
       auth.reason === "UNAUTHORIZED" ? "Chưa đăng nhập" : "Không có quyền",
