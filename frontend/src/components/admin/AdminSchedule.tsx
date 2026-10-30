@@ -384,7 +384,19 @@ nextAction: reportForm.nextAction,
   }
 
   function handleExportCSV() {
+    const startDateStr = selectedSchedule?.start_date
+      ? new Date(selectedSchedule.start_date).toLocaleDateString("vi-VN").replace(/\//g, "-")
+      : "";
+    const filename = `danh-sach-khach-${selectedSchedule?.departure_code || "tour"}${
+      startDateStr ? `-khoi-hanh-${startDateStr}` : ""
+    }.csv`;
+
     const rows = [
+      [`DANH SÁCH HÀNH KHÁCH - ĐỢT KHỞI HÀNH ${selectedSchedule?.departure_code || ""}`],
+      [`Tour`, selectedSchedule?.tour_name || ""],
+      [`Ngày khởi hành`, selectedSchedule?.start_date ? formatDate(selectedSchedule.start_date) : ""],
+      [`Ngày lập`, new Date().toLocaleDateString("vi-VN")],
+      [],
       [
         "Mã booking",
         "Tên khách",
@@ -419,9 +431,7 @@ nextAction: reportForm.nextAction,
 
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
-    link.download = `danh-sach-khach-${
-      selectedSchedule?.departure_code || "tour"
-    }.csv`;
+    link.download = filename;
     link.click();
 
     URL.revokeObjectURL(link.href);
@@ -429,6 +439,9 @@ nextAction: reportForm.nextAction,
   }
 
   function handleExportPDF() {
+    const startDateStr = selectedSchedule?.start_date
+      ? formatDate(selectedSchedule.start_date)
+      : "";
     const rows = filteredGuests
       .map(
         (guest, index) => `
@@ -457,19 +470,20 @@ nextAction: reportForm.nextAction,
       <html lang="vi">
         <head>
           <meta charset="UTF-8" />
-          <title>Danh sách khách hàng</title>
+          <title>Danh sách khách hàng ${selectedSchedule?.departure_code || ""} khởi hành ${startDateStr}</title>
           <style>
             * { box-sizing: border-box; }
             body {
-              font-family: Arial, "Times New Roman", sans-serif;
-              padding: 28px;
-              color: #111;
+              font-family: Arial, sans-serif;
+              padding: 20px;
+              color: #181c1d;
             }
             h1 {
               text-align: center;
               margin-bottom: 4px;
               text-transform: uppercase;
-              font-size: 22px;
+              font-size: 20px;
+              color: #00606c;
             }
             .subtitle {
               text-align: center;
@@ -613,8 +627,8 @@ nextAction: reportForm.nextAction,
         </div>
       </header>
 
-      <div className="grid grid-cols-12 gap-8">
-        <section className="col-span-12 space-y-6 lg:col-span-4">
+      <div className="grid grid-cols-12 gap-8 lg:h-[calc(100vh-210px)] lg:overflow-hidden pb-4">
+        <section className="col-span-12 space-y-6 lg:col-span-4 lg:h-full lg:overflow-y-auto pr-1">
           <div className="flex items-center justify-between">
             <h3 className="flex items-center gap-2 text-lg font-bold">
               <span className="h-6 w-2 rounded-full bg-[#9b4500]" />
@@ -724,7 +738,7 @@ nextAction: reportForm.nextAction,
           </div>
         </section>
 
-        <section className="col-span-12 space-y-8 lg:col-span-8">
+        <section className="col-span-12 space-y-8 lg:col-span-8 lg:h-full lg:overflow-y-auto pr-1 pb-10">
           <div className="grid grid-cols-1 gap-8 md:grid-cols-2">
             <div className="rounded-xl bg-white p-8 shadow-sm">
               <h3 className="mb-6 flex items-center gap-2 text-xl font-bold">

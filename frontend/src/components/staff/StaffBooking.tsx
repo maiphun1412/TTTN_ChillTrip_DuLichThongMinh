@@ -28,6 +28,11 @@ import {
   exportStaffBookingsToExcel,
   exportStaffBookingsToPdf,
 } from "@/lib/export/staffBookingExport";
+import ExportTimeFilter, {
+  TimeFilterOptions,
+  formatReportTimeLabel,
+  formatReportFilenameSuffix,
+} from "@/components/shared/ExportTimeFilter";
 
 const tabs = [
   { label: "Tất cả", value: "ALL" },
@@ -121,6 +126,60 @@ function sendEmail(email: string, bookingCode: string) {
 
 export default function StaffBooking() {
   const router = useRouter();
+
+  const [showReportFilterModal, setShowReportFilterModal] = useState(false);
+  const [timeFilter, setTimeFilter] = useState<TimeFilterOptions>({
+    type: "month",
+    month: new Date().getMonth() + 1,
+    quarter: 1,
+    year: new Date().getFullYear(),
+  });
+  const [exportLoading, setExportLoading] = useState(false);
+
+  const handleExport = async (format: "excel" | "pdf") => {
+    try {
+      setExportLoading(true);
+      let fDate = "";
+      let tDate = "";
+      if (timeFilter.type === "month") {
+        fDate = `${timeFilter.year}-${String(timeFilter.month).padStart(2, "0")}-01`;
+        const lastDay = new Date(timeFilter.year, timeFilter.month, 0).getDate();
+        tDate = `${timeFilter.year}-${String(timeFilter.month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+      } else {
+        const qMonths = [
+          { f: "01-01", t: "03-31" },
+          { f: "04-01", t: "06-30" },
+          { f: "07-01", t: "09-30" },
+          { f: "10-01", t: "12-31" },
+        ];
+        fDate = `${timeFilter.year}-${qMonths[timeFilter.quarter - 1].f}`;
+        tDate = `${timeFilter.year}-${qMonths[timeFilter.quarter - 1].t}`;
+      }
+
+      const result = await getStaffBookingsApi({
+        status: activeTab,
+        keyword: keyword,
+        paymentStatus: paymentStatus,
+        fromDate: fDate,
+        toDate: tDate,
+      });
+
+      const timeLabel = formatReportTimeLabel(timeFilter);
+      const fileSuffix = formatReportFilenameSuffix(timeFilter);
+
+      if (format === "excel") {
+        await exportStaffBookingsToExcel(result.bookings, timeLabel, fileSuffix);
+      } else {
+        exportStaffBookingsToPdf(result.bookings, timeLabel, fileSuffix);
+      }
+      setShowReportFilterModal(false);
+    } catch (error) {
+      console.error("Export error:", error);
+      alert("Đã xảy ra lỗi khi xuất báo cáo.");
+    } finally {
+      setExportLoading(false);
+    }
+  };
 
   const [bookings, setBookings] = useState<StaffBookingItem[]>([]);
   const [selectedId, setSelectedId] = useState("");
@@ -411,47 +470,15 @@ export default function StaffBooking() {
               )}
             </div>
 
-            <div className="relative">
+            <div>
               <button
                 type="button"
-                onClick={() => setOpenExportMenu((prev) => !prev)}
+                onClick={() => setShowReportFilterModal(true)}
                 className="flex items-center gap-2 rounded-full bg-[#9defff] px-5 py-2.5 text-sm font-bold text-[#001f24] transition hover:brightness-95"
               >
                 <Download size={17} />
                 Xuất báo cáo
-                <ChevronDown
-                  size={16}
-                  className={`transition ${openExportMenu ? "rotate-180" : ""}`}
-                />
               </button>
-
-              {openExportMenu && (
-                <div className="absolute right-0 top-12 z-50 w-44 overflow-hidden rounded-2xl border border-[#dfe3e4] bg-white shadow-xl">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setOpenExportMenu(false);
-                      exportStaffBookingsToPdf(bookings);
-                    }}
-                    className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-bold text-[#3e494b] transition hover:bg-[#f1f4f5] hover:text-[#00606c]"
-                  >
-                    <Download size={16} />
-                    Xuất PDF
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setOpenExportMenu(false);
-                      exportStaffBookingsToExcel(bookings);
-                    }}
-                    className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-bold text-[#3e494b] transition hover:bg-[#f1f4f5] hover:text-[#00606c]"
-                  >
-                    <Download size={16} />
-                    Xuất Excel
-                  </button>
-                </div>
-              )}
             </div>
           </div>
         </div>
@@ -883,6 +910,54 @@ export default function StaffBooking() {
           </div>
         )}
       </aside>
+      {showReportFilterModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm animate-fade-in">
+          <div className="w-full max-w-md overflow-hidden rounded-[2rem] bg-white p-6 shadow-2xl">
+            <div className="mb-6 flex items-center justify-between border-b border-[#ebeeef] pb-4">
+              <h3 className="text-lg font-black text-[#00606c]">Xuất báo cáo đặt chỗ</h3>
+              <button
+                type="button"
+                onClick={() => setShowReportFilterModal(false)}
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-[#f1f4f5] text-[#3e494b]"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="my-6">
+              <ExportTimeFilter value={timeFilter} onChange={setTimeFilter} />
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowReportFilterModal(false)}
+                className="flex-1 rounded-full border border-[#bdc8cb] py-3 text-xs font-black text-[#3e494b]"
+              >
+                Đóng
+              </button>
+              <button
+                type="button"
+                disabled={exportLoading}
+                onClick={() => handleExport("excel")}
+                className="flex-1 flex items-center justify-center gap-1.5 rounded-full bg-[#00606c] py-3 text-xs font-black text-white disabled:opacity-50"
+              >
+                <Download size={14} />
+                {exportLoading ? "Đang xuất..." : "Xuất Excel"}
+              </button>
+              <button
+                type="button"
+                disabled={exportLoading}
+                onClick={() => handleExport("pdf")}
+                className="flex-1 flex items-center justify-center gap-1.5 rounded-full bg-[#9b4500] py-3 text-xs font-black text-white disabled:opacity-50"
+              >
+                <FileText size={14} />
+                {exportLoading ? "Đang xuất..." : "Xuất PDF"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

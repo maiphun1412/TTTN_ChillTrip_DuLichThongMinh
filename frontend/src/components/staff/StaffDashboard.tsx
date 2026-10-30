@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
@@ -23,8 +24,21 @@ import {
 } from "lucide-react";
 import {
   getStaffDashboardApi,
+  getStaffFinanceApi,
   type StaffDashboardData,
+  type StaffFinanceData,
 } from "@/lib/api/staff.api";
+import {
+  exportFinanceExcel,
+  exportFinancePdf,
+} from "@/components/staff/StaffFinance";
+import ExportTimeFilter, {
+  TimeFilterOptions,
+  formatReportTimeLabel,
+  formatReportFilenameSuffix,
+  filterItemsByTime,
+} from "@/components/shared/ExportTimeFilter";
+import { Download, FileText, X } from "lucide-react";
 
 function formatMoney(value: number) {
   return new Intl.NumberFormat("vi-VN").format(value || 0) + "đ";
@@ -82,6 +96,137 @@ export default function StaffDashboard() {
   const [data, setData] = useState<StaffDashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
+
+  const [showReportFilterModal, setShowReportFilterModal] = useState(false);
+  const [timeFilter, setTimeFilter] = useState<TimeFilterOptions>({
+    type: "month",
+    month: new Date().getMonth() + 1,
+    quarter: 1,
+    year: new Date().getFullYear(),
+  });
+  const [exportLoading, setExportLoading] = useState(false);
+
+  const handleFinanceExport = async (format: "excel" | "pdf") => {
+    try {
+      if (timeFilter.type === "custom") {
+        if (!timeFilter.customStartDate || !timeFilter.customEndDate) {
+          alert("Vui lòng chọn đầy đủ ngày bắt đầu và ngày kết thúc.");
+          return;
+        }
+        if (timeFilter.customStartDate > timeFilter.customEndDate) {
+          alert("Ngày bắt đầu không được lớn hơn ngày kết thúc.");
+          return;
+        }
+      }
+
+      setExportLoading(true);
+
+      let start: string | undefined;
+      let end: string | undefined;
+
+      if (timeFilter.type === "custom") {
+        start = timeFilter.customStartDate;
+        end = timeFilter.customEndDate;
+      } else if (timeFilter.type === "month") {
+        start = `${timeFilter.year}-${String(timeFilter.month).padStart(2, "0")}-01`;
+        const lastDay = new Date(timeFilter.year, timeFilter.month, 0).getDate();
+        end = `${timeFilter.year}-${String(timeFilter.month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+      } else if (timeFilter.type === "quarter") {
+        const startMonth = (timeFilter.quarter - 1) * 3 + 1;
+        const endMonth = timeFilter.quarter * 3;
+        start = `${timeFilter.year}-${String(startMonth).padStart(2, "0")}-01`;
+        const lastDay = new Date(timeFilter.year, endMonth, 0).getDate();
+        end = `${timeFilter.year}-${String(endMonth).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+      }
+
+      const financeData = await getStaffFinanceApi({
+        startDate: start,
+        endDate: end,
+      });
+      if (!financeData) {
+        alert("Không lấy được dữ liệu tài chính.");
+        return;
+      }
+
+      // Lọc dữ liệu theo thời gian được chọn
+      const filteredTransactions = filterItemsByTime(
+        financeData.transactions || [],
+        (item) => item.paidAt || item.createdAt,
+        timeFilter
+      );
+
+      const filteredDebts = filterItemsByTime(
+        financeData.debts || [],
+        (item) => item.bookedAt,
+        timeFilter
+      );
+
+      const filteredRefunds = filterItemsByTime(
+        financeData.refunds || [],
+        (item) => item.refundAt || item.createdAt,
+        timeFilter
+      );
+
+      // Tính toán lại summary
+      const paidTrans = filteredTransactions.filter(
+        (t) => t.paymentStatus === "PAID"
+      );
+      const pendingTrans = filteredTransactions.filter(
+        (t) => t.paymentStatus === "PENDING"
+      );
+
+      const paidAmount = paidTrans.reduce(
+        (sum, t) => sum + Number(t.amount || 0),
+        0
+      );
+      const pendingPaymentAmount = pendingTrans.reduce(
+        (sum, t) => sum + Number(t.amount || 0),
+        0
+      );
+      const monthRevenue = paidAmount;
+      const unpaidDebtAmount = filteredDebts.reduce(
+        (sum, d) => sum + Number(d.remainingAmount || 0),
+        0
+      );
+      const refundAmount = filteredRefunds
+        .filter((r) => r.refundStatus !== "REJECTED")
+        .reduce((sum, r) => sum + Number(r.refundAmount || 0), 0);
+      const netRevenue = monthRevenue - refundAmount;
+
+      const filteredSummary = {
+        monthRevenue,
+        pendingPaymentAmount,
+        paidAmount,
+        unpaidDebtAmount,
+        refundAmount,
+        netRevenue,
+      };
+
+      const exportData: StaffFinanceData = {
+        ...financeData,
+        summary: filteredSummary,
+        transactions: filteredTransactions,
+        debts: filteredDebts,
+        refunds: filteredRefunds,
+      };
+
+      const timeLabel = formatReportTimeLabel(timeFilter);
+      const fileSuffix = formatReportFilenameSuffix(timeFilter);
+
+      if (format === "excel") {
+        await exportFinanceExcel(exportData, timeLabel, fileSuffix);
+      } else {
+        exportFinancePdf(exportData, timeLabel);
+      }
+
+      setShowReportFilterModal(false);
+    } catch (error) {
+      console.error("Export finance error:", error);
+      alert("Đã xảy ra lỗi khi xuất báo cáo.");
+    } finally {
+      setExportLoading(false);
+    }
+  };
 
   async function loadDashboard() {
     try {
@@ -356,10 +501,10 @@ export default function StaffDashboard() {
                 hành và các đầu việc điều phối trước ngày đi.
               </p>
 
-              <button className="mt-6 inline-flex items-center gap-2 rounded-full bg-white px-6 py-3 text-sm font-black text-[#00606c] transition hover:scale-105">
+              <Link href="/staff/operation" className="mt-6 inline-flex items-center gap-2 rounded-full bg-white px-6 py-3 text-sm font-black !text-[#00606c] transition hover:scale-105">
                 Xem tác vụ ưu tiên
-                <ArrowRight size={18} />
-              </button>
+                <ArrowRight size={18} className="!text-[#00606c]" />
+              </Link>
             </div>
           </section>
         </div>
@@ -429,25 +574,25 @@ export default function StaffDashboard() {
             <h3 className="mb-5 text-lg font-black">Thao tác nhanh</h3>
 
             <div className="grid grid-cols-2 gap-4">
-              <button className="flex min-h-28 flex-col items-center justify-center gap-2 rounded-3xl bg-[#f1f4f5] p-4 text-[#3e494b] transition hover:bg-[#ddf9ff] hover:text-[#00606c]">
+              <Link href="/staff/customers" className="flex min-h-28 flex-col items-center justify-center gap-2 rounded-3xl bg-[#f1f4f5] p-4 text-[#3e494b] transition hover:bg-[#ddf9ff] hover:text-[#00606c]">
                 <UserPlus size={24} />
                 <span className="text-xs font-black">Thêm khách</span>
-              </button>
+              </Link>
 
-              <button className="flex min-h-28 flex-col items-center justify-center gap-2 rounded-3xl bg-[#f1f4f5] p-4 text-[#3e494b] transition hover:bg-[#ddf9ff] hover:text-[#00606c]">
+              <Link href="/staff/finance" className="flex min-h-28 flex-col items-center justify-center gap-2 rounded-3xl bg-[#f1f4f5] p-4 text-[#3e494b] transition hover:bg-[#ddf9ff] hover:text-[#00606c]">
                 <ReceiptText size={24} />
                 <span className="text-xs font-black">Tạo báo cáo</span>
-              </button>
+              </Link>
 
-              <button className="flex min-h-28 flex-col items-center justify-center gap-2 rounded-3xl bg-[#f1f4f5] p-4 text-[#3e494b] transition hover:bg-[#ddf9ff] hover:text-[#00606c]">
+              <Link href="/staff/requests" className="flex min-h-28 flex-col items-center justify-center gap-2 rounded-3xl bg-[#f1f4f5] p-4 text-[#3e494b] transition hover:bg-[#ddf9ff] hover:text-[#00606c]">
                 <Send size={24} />
                 <span className="text-xs font-black">Gửi email</span>
-              </button>
+              </Link>
 
-              <button className="flex min-h-28 flex-col items-center justify-center gap-2 rounded-3xl bg-[#f1f4f5] p-4 text-[#3e494b] transition hover:bg-[#ddf9ff] hover:text-[#00606c]">
+              <Link href="/staff/schedule" className="flex min-h-28 flex-col items-center justify-center gap-2 rounded-3xl bg-[#f1f4f5] p-4 text-[#3e494b] transition hover:bg-[#ddf9ff] hover:text-[#00606c]">
                 <MessageCircle size={24} />
                 <span className="text-xs font-black">Liên hệ HDV</span>
-              </button>
+              </Link>
             </div>
           </section>
 
@@ -477,8 +622,12 @@ export default function StaffDashboard() {
               </div>
             </div>
 
-            <button className="mt-6 w-full rounded-full bg-[#00606c] py-3 text-sm font-black text-white transition hover:bg-[#004f59]">
-              Xuất báo cáo
+            <button
+              type="button"
+              onClick={() => setShowReportFilterModal(true)}
+              className="mt-6 w-full rounded-full bg-[#00606c] py-3 text-sm font-black text-white transition hover:bg-[#004f59]"
+            >
+              Xuất báo cáo tài chính
             </button>
           </section>
 
@@ -505,6 +654,54 @@ export default function StaffDashboard() {
           </section>
         </aside>
       </div>
+      {showReportFilterModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm animate-fade-in">
+          <div className="w-full max-w-md overflow-hidden rounded-[2rem] bg-white p-6 shadow-2xl">
+            <div className="mb-6 flex items-center justify-between border-b border-[#ebeeef] pb-4">
+              <h3 className="text-lg font-black text-[#00606c]">Xuất báo cáo tài chính</h3>
+              <button
+                type="button"
+                onClick={() => setShowReportFilterModal(false)}
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-[#f1f4f5] text-[#3e494b]"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="my-6">
+              <ExportTimeFilter value={timeFilter} onChange={setTimeFilter} />
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowReportFilterModal(false)}
+                className="flex-1 rounded-full border border-[#bdc8cb] py-3 text-sm font-black text-[#3e494b]"
+              >
+                Đóng
+              </button>
+              <button
+                type="button"
+                disabled={exportLoading}
+                onClick={() => handleFinanceExport("excel")}
+                className="flex-1 flex items-center justify-center gap-1.5 rounded-full bg-[#00606c] py-3 text-xs font-black text-white disabled:opacity-50"
+              >
+                <Download size={14} />
+                {exportLoading ? "Đang xuất..." : "Xuất Excel"}
+              </button>
+              <button
+                type="button"
+                disabled={exportLoading}
+                onClick={() => handleFinanceExport("pdf")}
+                className="flex-1 flex items-center justify-center gap-1.5 rounded-full bg-[#9b4500] py-3 text-xs font-black text-white disabled:opacity-50"
+              >
+                <FileText size={14} />
+                {exportLoading ? "Đang xuất..." : "Xuất PDF"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

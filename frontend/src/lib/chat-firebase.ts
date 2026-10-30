@@ -14,6 +14,14 @@ export type FirebaseChatMessage = {
   role: "user" | "assistant";
   message: string;
   createdAt?: number | object;
+  tours?: Array<{
+    id: string;
+    tourName: string;
+    basePrice: number | string;
+    imageUrl: string;
+    startDate: string;
+    availableSeats: number;
+  }>;
 };
 
 const BASE_PATH = "chilltrip/chats";

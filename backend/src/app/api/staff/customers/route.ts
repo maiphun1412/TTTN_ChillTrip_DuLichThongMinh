@@ -115,7 +115,8 @@ export async function GET(request: NextRequest) {
         u.status AS userStatus,
         COALESCE(bs.totalBookings, 0) AS totalBookings,
         COALESCE(bs.totalSpent, 0) AS totalSpent,
-        bs.lastBookedAt
+        bs.lastBookedAt,
+        c.created_at AS createdAt
       FROM customers c
       LEFT JOIN users u ON u.id = c.user_id
       OUTER APPLY (
@@ -166,6 +167,7 @@ export async function GET(request: NextRequest) {
       totalBookings: toNumber(item.totalBookings),
       totalSpent: toNumber(item.totalSpent),
       lastBookedAt: formatDate(item.lastBookedAt),
+      createdAt: item.createdAt,
     }));
 
     const summary = summaryRows[0];

@@ -16,7 +16,21 @@ export async function GET(req: Request) {
     const keyword = searchParams.get("keyword")?.trim() || "";
     const tourType = searchParams.get("tourType")?.trim() || "";
     const status = searchParams.get("status")?.trim() || "PUBLISHED";
-    const tagId = searchParams.get("tagId")?.trim(); // ✅ thêm dòng này
+    const tagId = searchParams.get("tagId")?.trim();
+    const destination = searchParams.get("destination")?.trim() || "";
+    const departureDate = searchParams.get("departureDate")?.trim() || "";
+
+    const scheduleFilter: any = {
+      booking_status: "OPEN",
+      available_seats: { gt: 0 },
+    };
+
+    if (departureDate) {
+      const depDate = new Date(departureDate);
+      if (!isNaN(depDate.getTime())) {
+        scheduleFilter.start_date = depDate;
+      }
+    }
 
     const tours = await prisma.tours.findMany({
       where: {
@@ -43,6 +57,29 @@ export async function GET(req: Request) {
               ],
             }
           : {}),
+
+        // ✅ FILTER THEO DESTINATION (tên tour, điểm đến, thành phố, quốc gia)
+        ...(destination
+          ? {
+              OR: [
+                { tour_name: { contains: destination } },
+                {
+                  destinations: {
+                    OR: [
+                      { destination_name: { contains: destination } },
+                      { city: { contains: destination } },
+                      { country: { contains: destination } },
+                    ],
+                  },
+                },
+              ],
+            }
+          : {}),
+
+        // ✅ CHỈ LẤY CÁC TOUR CÒN LỊCH KHỞI HÀNH THỎA MÃN (OPEN, CÒN CHỖ, VÀ ĐÚNG NGÀY NẾU CÓ)
+        departure_schedules: {
+          some: scheduleFilter,
+        },
       },
 
       include: {
@@ -54,9 +91,7 @@ export async function GET(req: Request) {
         },
 
         departure_schedules: {
-          where: {
-            booking_status: "OPEN",
-          },
+          where: scheduleFilter,
           orderBy: {
             start_date: "asc",
           },

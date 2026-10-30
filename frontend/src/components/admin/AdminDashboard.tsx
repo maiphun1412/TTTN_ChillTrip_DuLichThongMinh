@@ -398,16 +398,24 @@ export default function AdminDashboard() {
 
           <div className="flex h-72 items-end justify-between gap-4 px-2">
             {revenueChart.map((item) => (
-              <div key={item.month} className="flex flex-1 flex-col items-center gap-3">
-                <div
-                  title={formatMoney(item.revenue)}
-                  className={`w-full rounded-t-2xl ${
-                    item.revenue > 0
-                      ? "bg-[#fc8a40] shadow-lg shadow-[#9b4500]/20"
-                      : "bg-[#00606c]/20"
-                  }`}
-                  style={{ height: `${item.height}%` }}
-                />
+              <div key={item.month} className="flex flex-1 flex-col items-center gap-3 h-full justify-end">
+                <div className="relative w-full flex-1 flex items-end group cursor-pointer">
+                  {/* Tooltip khi rê chuột */}
+                  {item.revenue > 0 && (
+                    <div className="absolute bottom-[calc(100%+10px)] left-1/2 -translate-x-1/2 pointer-events-none opacity-0 group-hover:opacity-100 group-hover:translate-y-[-4px] transition-all duration-300 bg-[#181c1d] text-white px-3 py-2 rounded-2xl text-[11px] font-extrabold shadow-xl whitespace-nowrap z-30 after:content-[''] after:absolute after:top-full after:left-1/2 after:-translate-x-1/2 after:border-[6px] after:border-transparent after:border-t-[#181c1d]">
+                      Doanh thu: {formatMoney(item.revenue)}
+                    </div>
+                  )}
+
+                  <div
+                    className={`w-full rounded-t-2xl transition-all duration-500 ${
+                      item.revenue > 0
+                        ? "bg-gradient-to-t from-[#00606c] to-[#0097a7] hover:from-[#9b4500] hover:to-[#fc8a40] shadow-lg shadow-[#00606c]/15"
+                        : "bg-[#00606c]/5 hover:bg-[#00606c]/10"
+                    }`}
+                    style={{ height: `${item.height}%` }}
+                  />
+                </div>
                 <span className="text-[11px] font-black text-[#3e494b]">
                   {item.month}
                 </span>

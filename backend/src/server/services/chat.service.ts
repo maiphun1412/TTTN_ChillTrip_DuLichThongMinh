@@ -7,6 +7,10 @@ const openai = new OpenAI({
 
 type CreateChatReplyParams = {
   message: string;
+  history?: Array<{
+    role: "user" | "assistant";
+    message: string;
+  }>;
 };
 
 type TourForPrompt = {
@@ -19,6 +23,10 @@ type TourForPrompt = {
   base_price?: unknown;
   short_description?: string | null;
   status?: string | null;
+  departure_schedules?: Array<{
+    start_date: Date;
+    available_seats: number;
+  }>;
 };
 
 function formatPrice(price?: unknown) {
@@ -31,17 +39,22 @@ function formatTourType(type?: string | null) {
   return type || "Đang cập nhật";
 }
 
-
 export const chatService = {
-  async createReply({ message }: CreateChatReplyParams) {
+  async createReply({ message, history }: CreateChatReplyParams) {
     let tourContext = "Hiện chưa có dữ liệu tour.";
 
     try {
       const tours = (await prisma.tours.findMany({
-        take: 20,
-        orderBy: {
-          id: "desc",
+        where: {
+          status: "PUBLISHED",
+          departure_schedules: {
+            some: {
+              booking_status: "OPEN",
+              available_seats: { gt: 0 }
+            }
+          }
         },
+        take: 15,
         select: {
           id: true,
           tour_name: true,
@@ -51,38 +64,48 @@ export const chatService = {
           duration_nights: true,
           base_price: true,
           short_description: true,
-          status: true,
-        },
+          departure_schedules: {
+            where: {
+              booking_status: "OPEN",
+              available_seats: { gt: 0 }
+            },
+            orderBy: {
+              start_date: "asc"
+            },
+            select: {
+              start_date: true,
+              available_seats: true
+            }
+          }
+        }
       })) as TourForPrompt[];
-
-      console.log(
-        "AI TOURS LOADED:",
-        tours.map((tour) => ({
-          id: String(tour.id),
-          name: tour.tour_name,
-          status: tour.status,
-        }))
-      );
 
       if (tours.length > 0) {
         tourContext = tours
           .map((tour, index) => {
-            return `${index + 1}. ${tour.tour_name}
+            const firstDeparture = tour.departure_schedules?.[0];
+            const startDateStr = firstDeparture
+              ? firstDeparture.start_date.toISOString().split("T")[0]
+              : "Đang cập nhật";
+            const seats = firstDeparture ? firstDeparture.available_seats : 0;
+            return `${index + 1}. Tour: ${tour.tour_name} (ID: ${tour.id})
 - Mã tour: ${tour.tour_code || "Đang cập nhật"}
-- Trạng thái: ${tour.status || "Đang cập nhật"}
 - Loại tour: ${formatTourType(tour.tour_type)}
-- Thời gian: ${tour.duration_days || 0} ngày ${
-              tour.duration_nights || 0
-            } đêm
+- Thời gian: ${tour.duration_days || 0} ngày ${tour.duration_nights || 0} đêm
 - Giá từ: ${formatPrice(tour.base_price)}
-- Mô tả: ${tour.short_description || "Đang cập nhật"}
-- Link chi tiết: /tours/${String(tour.id)}`;
+- Ngày khởi hành gần nhất: ${startDateStr}
+- Số chỗ còn trống: ${seats}
+- Mô tả: ${tour.short_description || "Đang cập nhật"}`;
           })
           .join("\n\n");
       }
     } catch (error) {
       console.error("Load tours for AI error:", error);
     }
+
+    const historyContext = history && history.length > 0
+      ? history.map((h: any) => `${h.role === "user" ? "Khách" : "AI"}: ${h.message}`).join("\n")
+      : "";
 
     const response = await openai.responses.create({
       model: "gpt-4.1-mini",
@@ -96,48 +119,32 @@ Vai trò:
 - Giải đáp thông tin đặt tour.
 - Hỗ trợ khách hàng trước và sau khi đặt tour.
 
-Dữ liệu tour hiện có trên ChillTrip:
+Dữ liệu tour hiện có trên ChillTrip (được lấy trực tiếp từ database thật):
 ${tourContext}
 
 Phong cách:
 - Trả lời bằng tiếng Việt.
 - Thân thiện, chuyên nghiệp.
 - Xưng "ChillTrip" hoặc "mình".
-- Không quá máy móc.
-- Không trả lời quá dài.
-- Ưu tiên trả lời dưới 150 từ.
+- Ưu tiên trả lời ngắn gọn, dưới 150 từ.
 
-Quy tắc:
-- Khi khách hỏi gợi ý tour, hãy ưu tiên giới thiệu các tour trong danh sách dữ liệu trên.
-- Nếu khách hỏi đi Hàn, Hàn Quốc, Seoul, Nami thì phải kiểm tra trong dữ liệu tour có tour liên quan đến Hàn Quốc không trước khi nói chưa có.
-- Có thể gợi ý 2-4 tour phù hợp, kèm tên tour, thời gian, giá từ và mô tả ngắn.
-- Không tự bịa tour, giá, ngày khởi hành, số chỗ còn lại nếu dữ liệu không có.
-- Nếu thiếu dữ liệu thì nói rõ chưa có thông tin.
-- Nếu khách hỏi tour không có trong danh sách, hãy nói hiện ChillTrip chưa có thông tin tour đó và gợi ý tour gần phù hợp nếu có.
-- Nếu khách hỏi chung chung thì chủ động hỏi thêm ngân sách, số ngày, điểm muốn đi hoặc phong cách du lịch.
-- Nếu khách muốn đặt tour, hướng dẫn khách vào trang chi tiết tour và bấm "Đặt tour".
-- Nếu khách hỏi câu không liên quan đến du lịch, không trả lời lan man theo chủ đề đó. Hãy lịch sự nói ChillTrip chuyên tư vấn du lịch, sau đó khéo léo dẫn dắt về du lịch, điểm đến, ẩm thực địa phương, tour hoặc trải nghiệm liên quan.
-- Không nói cứng kiểu "tôi không thể trả lời". Hãy trả lời mềm mại, thân thiện.
+Quy tắc bắt buộc:
+1. Khi khách hỏi gợi ý tour, hãy tư vấn tour phù hợp nhất dựa vào ngân sách, địa điểm, số người và thời gian.
+2. Nếu khách hỏi chung chung, hãy chủ động hỏi thêm nhu cầu (điểm đến, ngày đi, ngân sách, số người) để tư vấn chính xác hơn.
+3. Khi bạn gợi ý một hoặc nhiều tour cụ thể trong danh sách trên, bạn BẮT BUỘC phải ghi mã tour theo định dạng này ở dòng cuối cùng của câu trả lời:
+   [TOURS: id1, id2, ...]
+   Ví dụ: "Dưới đây là các tour bạn có thể tham khảo: [TOURS: 5, 9]"
+4. Chỉ sử dụng ID thực tế được cung cấp trong danh sách tour ở trên. Tuyệt đối KHÔNG tự tạo ID tour giả lập.
+5. Nếu khách muốn đặt tour, hãy hướng dẫn khách bấm vào nút "Đặt tour" trên Card tour hiển thị bên dưới.
+6. Nếu khách hỏi các câu hỏi không liên quan đến du lịch, hãy lịch sự hướng dẫn khách quay về chủ đề du lịch và tour của ChillTrip.
+7. Nếu không xử lý được yêu cầu hoặc khách cần nhân viên tư vấn trực tiếp, hãy đề xuất khách liên hệ nhân viên và hướng dẫn bấm nút liên hệ nhân viên.
 
-Ví dụ:
-Khách: Tôi muốn đi biển.
+Lịch sử hội thoại trước đó (nếu có):
+${historyContext}
+
+Câu hỏi mới nhất của khách:
+Khách: ${message}
 AI:
-Bạn thích du lịch nghỉ dưỡng hay khám phá? ChillTrip có thể gợi ý các tour biển hiện có trên hệ thống, kèm thời gian và giá từ để bạn dễ chọn hơn.
-
-Khách: Tôi muốn đặt tour.
-AI:
-Bạn có thể mở trang chi tiết tour và nhấn "Đặt tour". Nếu cần, mình có thể giúp bạn chọn tour phù hợp trước nhé.
-
-Khách: Hôm nay ăn gì?
-AI:
-ChillTrip chuyên tư vấn du lịch nên mình có thể không quyết định chính xác bữa ăn hôm nay cho bạn. Nhưng nếu bạn thích khám phá ẩm thực, mình có thể gợi ý các điểm đến nổi tiếng về món ngon như Huế, Đà Nẵng, Hội An, Đà Lạt hoặc Phú Quốc.
-
-Khách: Tôi đang buồn.
-AI:
-Hy vọng bạn sẽ sớm thấy nhẹ lòng hơn. Đôi khi một chuyến đi ngắn cũng giúp thư giãn rất nhiều. ChillTrip có thể gợi ý vài điểm đến nghỉ dưỡng nhẹ nhàng cho cuối tuần nếu bạn muốn.
-
-Câu hỏi của khách:
-${message}
       `,
     });
 

@@ -89,6 +89,7 @@ useEffect(() => {
   setFavoriteTours((prev) =>
     prev.filter((item) => String(item.tourId) !== String(tourId))
   );
+  window.dispatchEvent(new Event("favorites-changed"));
 }
 
   return (

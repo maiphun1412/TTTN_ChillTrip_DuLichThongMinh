@@ -20,6 +20,12 @@ import {
   Users,
   X,
 } from "lucide-react";
+import ExportTimeFilter, {
+  TimeFilterOptions,
+  formatReportTimeLabel,
+  formatReportFilenameSuffix,
+  filterItemsByTime,
+} from "@/components/shared/ExportTimeFilter";
 
 const API_BASE_URL = "/backend-api";
 
@@ -147,6 +153,21 @@ export default function AdminUsers() {
   const [statusFilter, setStatusFilter] = useState("");
   const [loading, setLoading] = useState(true);
   const [showExportPreview, setShowExportPreview] = useState(false);
+
+  const [timeFilter, setTimeFilter] = useState<TimeFilterOptions>({
+    type: "month",
+    month: new Date().getMonth() + 1,
+    quarter: 1,
+    year: new Date().getFullYear(),
+  });
+
+  const filteredUsersForExport = useMemo(() => {
+    return filterItemsByTime(
+      users,
+      (item) => item.created_at,
+      timeFilter
+    );
+  }, [users, timeFilter]);
 
   async function loadData() {
     try {
@@ -306,8 +327,14 @@ export default function AdminUsers() {
     }
   }
 
-  function exportCsv() {
+  function exportCsv(dataToExport: AdminUser[]) {
+    const timeLabel = formatReportTimeLabel(timeFilter);
+    const fileSuffix = formatReportFilenameSuffix(timeFilter);
+
     const rows = [
+      [`BÁO CÁO DANH SÁCH NHÂN SỰ - ${timeLabel.toUpperCase()}`],
+      [`Ngày lập`, new Date().toLocaleDateString("vi-VN")],
+      [],
       [
         "Họ tên",
         "Email",
@@ -319,7 +346,7 @@ export default function AdminUsers() {
         "Đăng nhập cuối",
         "Trạng thái",
       ],
-      ...users.map((item) => [
+      ...dataToExport.map((item) => [
         item.full_name,
         item.email || "",
         item.phone || "",
@@ -345,14 +372,15 @@ export default function AdminUsers() {
     const a = document.createElement("a");
 
     a.href = url;
-    a.download = `danh-sach-nhan-su-${Date.now()}.csv`;
+    a.download = `danh-sach-nhan-su-${fileSuffix}.csv`;
     a.click();
 
     URL.revokeObjectURL(url);
   }
 
-  function exportPdf() {
-    const rows = users
+  function exportPdf(dataToExport: AdminUser[]) {
+    const timeLabel = formatReportTimeLabel(timeFilter);
+    const tableRows = dataToExport
       .map(
         (item, index) => `
           <tr>
@@ -372,74 +400,55 @@ export default function AdminUsers() {
       .join("");
 
     const html = `
-      <!doctype html>
+      <!DOCTYPE html>
       <html>
         <head>
           <meta charset="utf-8" />
-          <title>Danh sách nhân sự</title>
+          <title>Báo cáo danh sách nhân sự ${timeLabel}</title>
           <style>
-            * {
-              box-sizing: border-box;
-            }
-
             body {
-              font-family: "Times New Roman", Times, serif;
-              color: #000;
-              padding: 28px;
+              font-family: Arial, sans-serif;
+              padding: 20px;
+              color: #181c1d;
             }
-
             h1 {
               text-align: center;
-              font-size: 22px;
-              margin: 0 0 8px;
-              text-transform: uppercase;
+              color: #00606c;
+              margin: 0 0 5px;
+              font-size: 24px;
             }
-
-            .sub {
+            .subtitle {
               text-align: center;
-              font-size: 14px;
-              margin-bottom: 24px;
+              font-size: 13px;
+              color: #5f6b6d;
+              margin-bottom: 20px;
             }
-
             table {
               width: 100%;
               border-collapse: collapse;
-              font-size: 13px;
+              margin-top: 20px;
             }
-
-            th,
-            td {
-              border: 1px solid #000;
-              padding: 7px 8px;
-              vertical-align: top;
+            th, td {
+              border: 1px solid #dfe3e4;
+              padding: 8px;
+              text-align: left;
+              font-size: 11px;
             }
-
             th {
-              text-align: center;
+              background-color: #f1f4f5;
+              color: #3e494b;
               font-weight: bold;
-              background: #f2f2f2;
             }
-
             .footer {
-              margin-top: 24px;
-              display: flex;
-              justify-content: flex-end;
-              font-size: 14px;
-            }
-
-            @media print {
-              body {
-                padding: 18px;
-              }
+              margin-top: 40px;
+              text-align: right;
+              font-size: 12px;
             }
           </style>
         </head>
         <body>
-          <h1>Danh sách nhân sự</h1>
-          <div class="sub">Ngày xuất: ${new Date().toLocaleDateString(
-            "vi-VN"
-          )}</div>
-
+          <h1>DANH SÁCH NHÂN SỰ CHILLTRIP</h1>
+          <div class="subtitle">Báo cáo: ${timeLabel} • Ngày xuất: ${new Date().toLocaleDateString("vi-VN")}</div>
           <table>
             <thead>
               <tr>
@@ -456,7 +465,7 @@ export default function AdminUsers() {
               </tr>
             </thead>
             <tbody>
-              ${rows}
+              ${tableRows}
             </tbody>
           </table>
 
@@ -466,12 +475,6 @@ export default function AdminUsers() {
               ..............................
             </div>
           </div>
-
-          <script>
-            window.onload = function () {
-              window.print();
-            };
-          </script>
         </body>
       </html>
     `;
@@ -514,7 +517,7 @@ export default function AdminUsers() {
             </button>
 
             <button
-              onClick={exportCsv}
+              onClick={() => exportCsv(filteredUsersForExport)}
               className="inline-flex items-center gap-2 rounded-full bg-white px-6 py-3 font-black text-[#00606c] shadow-sm transition hover:bg-[#9defff]/30"
             >
               <Download size={18} />
@@ -522,7 +525,7 @@ export default function AdminUsers() {
             </button>
 
             <button
-              onClick={exportPdf}
+              onClick={() => exportPdf(filteredUsersForExport)}
               className="inline-flex items-center gap-2 rounded-full bg-[#00606c] px-6 py-3 font-black text-white shadow-lg shadow-[#00606c]/20 transition hover:scale-105"
             >
               <FileText size={18} />
@@ -531,13 +534,18 @@ export default function AdminUsers() {
           </div>
         </section>
 
+        {/* Bộ chọn thời gian nhúng trực tiếp lên giao diện preview */}
+        <div className="rounded-[2.5rem] bg-[#f6fafb] p-6 ring-1 ring-[#ebeeef] shadow-sm">
+          <ExportTimeFilter value={timeFilter} onChange={setTimeFilter} />
+        </div>
+
         <section className="overflow-hidden rounded-[2.5rem] border border-[#bdc8cb]/10 bg-white shadow-xl shadow-[#00606c]/5">
           <div className="border-b border-[#bdc8cb]/10 p-6">
             <h2 className="text-xl font-black text-[#00606c]">
               Danh sách chuẩn bị xuất
             </h2>
             <p className="mt-1 text-sm font-semibold text-[#6e797b]">
-              Tổng cộng {users.length} tài khoản nhân sự.
+              Tổng cộng {filteredUsersForExport.length} tài khoản nhân sự.
             </p>
           </div>
 
@@ -559,17 +567,17 @@ export default function AdminUsers() {
               </thead>
 
               <tbody className="divide-y divide-[#bdc8cb]/10">
-                {users.length === 0 ? (
+                {filteredUsersForExport.length === 0 ? (
                   <tr>
                     <td
                       colSpan={10}
                       className="px-6 py-12 text-center text-sm font-bold text-[#6e797b]"
                     >
-                      Không có dữ liệu để xuất.
+                      Không có dữ liệu nhân sự trong khoảng thời gian được chọn.
                     </td>
                   </tr>
                 ) : (
-                  users.map((user, index) => (
+                  filteredUsersForExport.map((user, index) => (
                     <tr key={user.id}>
                       <td className="px-6 py-4 text-sm font-bold">
                         {index + 1}

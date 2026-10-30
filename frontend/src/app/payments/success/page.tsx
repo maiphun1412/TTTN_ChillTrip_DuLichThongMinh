@@ -2,8 +2,24 @@
 
 import { useSearchParams, useRouter } from "next/navigation";
 import HomeHeader from "@/components/home/HomeHeader";
+import { Suspense } from "react";
 
 export default function PaymentSuccessPage() {
+  return (
+    <Suspense fallback={
+      <main className="min-h-screen bg-[#f6fafb] text-[#181c1d]">
+        <HomeHeader />
+        <div className="mx-auto max-w-7xl px-4 py-40 text-center text-xl font-bold text-[#00606c]">
+          Đang tải thông tin thanh toán...
+        </div>
+      </main>
+    }>
+      <PaymentSuccessContent />
+    </Suspense>
+  );
+}
+
+function PaymentSuccessContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
 

@@ -186,7 +186,7 @@ export async function GET(request: NextRequest) {
     const summaryRows = await prisma.$queryRaw<SummaryRow[]>`
       SELECT
         COUNT(DISTINCT t.id) AS totalTours,
-        SUM(CASE WHEN t.status = 'ACTIVE' THEN 1 ELSE 0 END) AS activeTours,
+        SUM(CASE WHEN t.status = 'PUBLISHED' THEN 1 ELSE 0 END) AS activeTours,
         (
           SELECT COUNT(*)
           FROM departure_schedules ds

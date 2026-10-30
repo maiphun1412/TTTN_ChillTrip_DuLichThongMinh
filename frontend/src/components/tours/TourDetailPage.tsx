@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import HomeHeader from "../home/HomeHeader";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
+import { useSeatAvailability } from "@/hooks/useSeatAvailability";
+import SeatWarningModal from "@/components/shared/SeatWarningModal";
 
 type ApiTourImage = {
   id: string;
@@ -143,6 +145,19 @@ function splitText(value?: string | null) {
     .filter(Boolean);
 }
 
+const HIDE_PAST_DEPARTURES = false;
+
+export function isPastDeparture(startDateStr: string | null | undefined): boolean {
+  if (!startDateStr) return true;
+  const startDate = new Date(startDateStr);
+  startDate.setHours(0, 0, 0, 0);
+
+  const currentDate = new Date();
+  currentDate.setHours(0, 0, 0, 0);
+
+  return startDate.getTime() < currentDate.getTime();
+}
+
 function getDepartureList(tour: ApiTour | null) {
   if (!tour) return [];
 
@@ -153,11 +168,25 @@ function getDepartureList(tour: ApiTour | null) {
       ? [tour.departure]
       : [];
 
-  return [...list].sort(
-    (a, b) =>
+  const sorted = [...list].sort((a, b) => {
+    const isPastA = isPastDeparture(a.startDate);
+    const isPastB = isPastDeparture(b.startDate);
+
+    // 1. Còn mở xếp trước đã quá ngày
+    if (!isPastA && isPastB) return -1;
+    if (isPastA && !isPastB) return 1;
+
+    // 2. Nếu cùng trạng thái, so sánh thời gian tăng dần để ngày sát hiện tại nhất lên đầu
+    return (
       new Date(a.startDate || "").getTime() -
       new Date(b.startDate || "").getTime()
-  );
+    );
+  });
+
+  if (HIDE_PAST_DEPARTURES) {
+    return sorted.filter((d) => !isPastDeparture(d.startDate));
+  }
+  return sorted;
 }
 function getTourMapLocation(tour: ApiTour | null) {
   const locationText = [
@@ -220,6 +249,7 @@ const [loading, setLoading] = useState(true);
   const router = useRouter();
   const [isFavorite, setIsFavorite] = useState(false);
   const [guests, setGuests] = useState(2);
+  const [selectedDepartureId, setSelectedDepartureId] = useState<string>("");
   const TourLocationMap = dynamic(
   () => import("../common/TourLocationMap"),
   {
@@ -365,11 +395,50 @@ const [loading, setLoading] = useState(true);
           )}&background=00606c&color=fff`,
         }))
       : [];
-const selectedDeparture = departureList[0] || null;
-const availableSeats =
-  selectedDeparture?.availableSeats ??
-  Number(selectedDeparture?.maxSeats || 0) -
-    Number(selectedDeparture?.bookedSeats || 0);
+  useEffect(() => {
+    if (departureList.length > 0) {
+      const active = departureList.find((d) => {
+        const available =
+          d.availableSeats ??
+          Number(d.maxSeats || 0) - Number(d.bookedSeats || 0);
+        return !isPastDeparture(d.startDate) && available > 0;
+      });
+      setSelectedDepartureId(String(active?.id || departureList[0]?.id || ""));
+    }
+  }, [departureList]);
+
+  const selectedDeparture = useMemo(() => {
+    return (
+      departureList.find((d) => String(d.id) === String(selectedDepartureId)) ||
+      departureList[0] ||
+      null
+    );
+  }, [departureList, selectedDepartureId]);
+
+  const availableSeats = useMemo(() => {
+    if (!selectedDeparture) return 0;
+    const seats =
+      selectedDeparture.availableSeats ??
+      Number(selectedDeparture.maxSeats || 0) -
+        Number(selectedDeparture.bookedSeats || 0);
+    return Math.max(seats, 0);
+  }, [selectedDeparture]);
+
+const {
+  isSeatsInvalid,
+  warningInfo,
+  showWarningModal,
+  closeWarning,
+} = useSeatAvailability({
+  tourId: tour?.id || "",
+  departureId: selectedDeparture?.id || "",
+  bookingType: "INDIVIDUAL",
+  adultCount: guests,
+  childCount: 0,
+  expectedGuestCount: 0,
+  availableSeats: availableSeats,
+  isLoading: loading,
+});
 
 const totalPrice = Number(tour?.basePrice || 0) * guests;
 const featuredPromotion = promotions[0] || null;
@@ -499,6 +568,7 @@ const mapLabel =
                         }
 
                         setIsFavorite(false);
+                        window.dispatchEvent(new Event("favorites-changed"));
                         return;
                       }
 
@@ -519,6 +589,7 @@ const mapLabel =
                       }
 
                       setIsFavorite(true);
+                      window.dispatchEvent(new Event("favorites-changed"));
                     } catch (err) {
                       console.error(err);
                       alert("Lỗi");
@@ -834,46 +905,80 @@ const mapLabel =
                     Chọn ngày khởi hành
                   </label>
                   <div className="relative">
-                    <select className="w-full appearance-none rounded-full bg-[#e5e9ea] px-6 py-4 outline-none ring-0 focus:ring-2 focus:ring-[#00606c]">
-                      {departureList.map((departure) => (
-                        <option key={departure.id}>
-                          {formatDate(departure.startDate)} -{" "}
-                          {formatDate(departure.endDate)}
-                        </option>
-                      ))}
+                    <select
+                      value={selectedDepartureId}
+                      onChange={(e) => setSelectedDepartureId(e.target.value)}
+                      className="w-full appearance-none rounded-full bg-[#e5e9ea] px-6 py-4 outline-none ring-0 focus:ring-2 focus:ring-[#00606c] text-sm font-semibold"
+                    >
+                      {departureList.map((departure) => {
+                        const isPast = isPastDeparture(departure.startDate);
+                        const avSeats =
+                          departure.availableSeats ??
+                          Number(departure.maxSeats || 0) -
+                            Number(departure.bookedSeats || 0);
+                        const isSeatsOut = avSeats <= 0;
+                        let suffix = "";
+                        if (isPast) suffix = " (Đã khởi hành)";
+                        else if (isSeatsOut) suffix = " (Hết chỗ)";
+
+                        return (
+                          <option
+                            key={departure.id}
+                            value={departure.id}
+                            disabled={isPast || isSeatsOut}
+                          >
+                            {formatDate(departure.startDate)} -{" "}
+                            {formatDate(departure.endDate)}
+                            {suffix}
+                          </option>
+                        );
+                      })}
 
                       {departureList.length === 0 ? (
-                        <option>Đang cập nhật</option>
+                        <option value="">Đang cập nhật</option>
                       ) : null}
                     </select>
                     <CalendarIcon className="pointer-events-none absolute right-6 top-1/2 h-5 w-5 -translate-y-1/2 text-[#3e494b]" />
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between rounded-full bg-[#e5e9ea] px-4 py-2">
-  <QtyButton
-    icon={<MinusIcon className="h-5 w-5" />}
-    onClick={() => setGuests((prev) => Math.max(1, prev - 1))}
-  />
-  <span className="text-xl font-bold">
-    {String(guests).padStart(2, "0")}
-  </span>
- <QtyButton
-  icon={<PlusIcon className="h-5 w-5" />}
-  onClick={() =>
-    setGuests((prev) => {
-      const maxGuests = availableSeats || tour.maxCapacity || 1;
+                <div className={`flex items-center justify-between rounded-full px-4 py-2 transition ${
+                  isSeatsInvalid ? "bg-[#ffdad6] ring-2 ring-[#ba1a1a]/40" : "bg-[#e5e9ea]"
+                }`}>
+                  <QtyButton
+                    icon={<MinusIcon className="h-5 w-5" />}
+                    onClick={() => setGuests((prev) => Math.max(1, prev - 1))}
+                  />
+                  <input
+                    type="number"
+                    min={1}
+                    value={guests}
+                    onChange={(e) => {
+                      const val = Number(e.target.value);
+                      if (val > 0) {
+                        setGuests(val);
+                      } else if (e.target.value === "") {
+                        setGuests("" as any);
+                      }
+                    }}
+                    onBlur={() => {
+                      if (!guests || Number(guests) < 1) {
+                        setGuests(1);
+                      }
+                    }}
+                    className="w-16 bg-transparent border-none text-center text-xl font-bold text-[#181c1d] outline-none focus:ring-0 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  />
+                  <QtyButton
+                    icon={<PlusIcon className="h-5 w-5" />}
+                    onClick={() => setGuests((prev) => prev + 1)}
+                  />
+                </div>
 
-      if (prev >= maxGuests) {
-        alert(`Chỉ còn ${maxGuests} chỗ trống`);
-        return prev;
-      }
-
-      return prev + 1;
-    })
-  }
-/>
-</div>
+                {isSeatsInvalid && (
+                  <p className="mt-2 text-xs font-bold text-[#ba1a1a] text-center animate-pulse">
+                    * Vượt số chỗ trống (Còn {availableSeats} chỗ)
+                  </p>
+                )}
 
                 <div className="border-t border-[#bdc8cb]/20 pt-4">
                   <div className="mb-2 flex justify-between">
@@ -895,18 +1000,58 @@ const mapLabel =
                     </span>
                   </div>
 
-                <a
-  href={`/booking?tourId=${tour.id}&guests=${guests}${
-    featuredPromotion
-      ? `&promotionCode=${encodeURIComponent(
-          featuredPromotion.promotion_code
-        )}`
-      : ""
-  }`}
- className="block w-full rounded-full bg-[linear-gradient(135deg,#9b4500_0%,#fc8a40_100%)] py-5 text-center text-lg font-extrabold !text-white shadow-lg shadow-[#9b4500]/20 transition-all hover:scale-[1.02] hover:!text-white active:scale-95"
->
-  ĐẶT TOUR NGAY
-</a>
+                  {(() => {
+                    const isDeparturePast = isPastDeparture(selectedDeparture?.startDate);
+                    const isDepartureSeatsOut = availableSeats <= 0;
+
+                    if (isDeparturePast) {
+                      return (
+                        <button
+                          type="button"
+                          disabled
+                          className="block w-full rounded-full bg-gray-400 py-5 text-center text-lg font-extrabold text-white cursor-not-allowed opacity-60 uppercase"
+                        >
+                          Đã khởi hành
+                        </button>
+                      );
+                    }
+                    if (isDepartureSeatsOut) {
+                      return (
+                        <button
+                          type="button"
+                          disabled
+                          className="block w-full rounded-full bg-gray-400 py-5 text-center text-lg font-extrabold text-white cursor-not-allowed opacity-60 uppercase"
+                        >
+                          Hết chỗ
+                        </button>
+                      );
+                    }
+                    if (isSeatsInvalid) {
+                      return (
+                        <button
+                          type="button"
+                          disabled
+                          className="block w-full rounded-full bg-gray-400 py-5 text-center text-lg font-extrabold text-white cursor-not-allowed opacity-60 uppercase"
+                        >
+                          CHỖ TRỐNG KHÔNG ĐỦ
+                        </button>
+                      );
+                    }
+                    return (
+                      <a
+                        href={`/booking?tourId=${tour.id}&departureId=${selectedDeparture?.id || ""}&guests=${guests}${
+                          featuredPromotion
+                            ? `&promotionCode=${encodeURIComponent(
+                                featuredPromotion.promotion_code
+                              )}`
+                            : ""
+                        }`}
+                        className="block w-full rounded-full bg-[linear-gradient(135deg,#9b4500_0%,#fc8a40_100%)] py-5 text-center text-lg font-extrabold !text-white shadow-lg shadow-[#9b4500]/20 transition-all hover:scale-[1.02] hover:!text-white active:scale-95"
+                      >
+                        ĐẶT TOUR NGAY
+                      </a>
+                    );
+                  })()}
                 </div>
               </div>
 
@@ -915,12 +1060,9 @@ const mapLabel =
                 <p className="text-xs leading-tight text-[#3e494b]">
                   Còn{" "}
                   <b>
-                    {departureList[0]?.availableSeats ||
-                      tour.maxCapacity ||
-                      0}{" "}
-                    chỗ
+                    {availableSeats} chỗ
                   </b>{" "}
-                  cho lịch khởi hành gần nhất.
+                  cho lịch khởi hành đang chọn.
                 </p>
               </div>
 
@@ -929,87 +1071,14 @@ const mapLabel =
               </p>
             </div>
 
-            {promotionLoading ? (
-  <div className="mb-6 rounded-[18px] border border-[#f3d6b8] bg-[#fff8ef] p-4">
-    <p className="text-sm font-bold text-[#9b4500]">
-      Đang tải ưu đãi...
-    </p>
-  </div>
-) : featuredPromotion ? (
-  <div className="mb-6 overflow-hidden rounded-[20px] border border-[#f3d6b8] bg-[#fff8ef]">
-    <div className="bg-[linear-gradient(135deg,#9b4500_0%,#fc8a40_100%)] px-4 py-3 text-white">
-      <p className="text-xs font-extrabold uppercase tracking-[0.16em] opacity-90">
-        Ưu đãi áp dụng cho tour này
-      </p>
-      <p className="mt-1 text-lg font-extrabold leading-tight">
-        {featuredPromotion.promotion_name}
-      </p>
-    </div>
+            <SeatWarningModal
+              isOpen={showWarningModal}
+              onClose={closeWarning}
+              selectedCount={warningInfo.selected}
+              availableSeats={warningInfo.available}
+              excessCount={warningInfo.excess}
+            />
 
-    <div className="p-4">
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <div>
-          <p className="text-2xl font-black text-[#9b4500]">
-            {formatPromotionDiscount(featuredPromotion)}
-          </p>
-
-          <p className="mt-1 text-xs text-[#6e797b]">
-            Hạn dùng: {formatDate(featuredPromotion.end_at)}
-          </p>
-        </div>
-
-        <button
-          type="button"
-          onClick={() => {
-            navigator.clipboard?.writeText(
-              featuredPromotion.promotion_code
-            );
-            alert(`Đã copy mã ${featuredPromotion.promotion_code}`);
-          }}
-          className="shrink-0 rounded-full bg-[#00606c] px-4 py-2 text-xs font-bold text-white transition hover:bg-[#004f59]"
-        >
-          Copy mã
-        </button>
-      </div>
-
-      <div className="rounded-2xl bg-white p-3">
-        <p className="text-sm font-extrabold tracking-[0.12em] text-[#00606c]">
-          {featuredPromotion.promotion_code}
-        </p>
-
-        {featuredPromotion.description ? (
-          <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-[#3e494b]">
-            {featuredPromotion.description}
-          </p>
-        ) : null}
-
-        <div className="mt-3 space-y-1 text-xs text-[#6e797b]">
-          <p>
-            Đơn tối thiểu:{" "}
-            <span className="font-bold text-[#181c1d]">
-              {formatPrice(featuredPromotion.min_order_amount)}
-            </span>
-          </p>
-
-          {featuredPromotion.max_discount_amount ? (
-            <p>
-              Giảm tối đa:{" "}
-              <span className="font-bold text-[#181c1d]">
-                {formatPrice(featuredPromotion.max_discount_amount)}
-              </span>
-            </p>
-          ) : null}
-        </div>
-      </div>
-
-      {promotions.length > 1 ? (
-        <p className="mt-3 text-xs font-semibold text-[#9b4500]">
-          +{promotions.length - 1} ưu đãi khác có thể áp dụng
-        </p>
-      ) : null}
-    </div>
-  </div>
-) : null}
           </div>
         </div>
 
@@ -1262,15 +1331,32 @@ function DepartureScheduleSection({
                 Number(departure.maxSeats || 0) -
                   Number(departure.bookedSeats || 0);
 
-              const isClosed =
-                departure.bookingStatus === "CLOSED" ||
-                departure.bookingStatus === "FULL" ||
-                Number(availableSeats || 0) <= 0;
+              const isPast = isPastDeparture(departure.startDate);
+              const isSeatsOut = Number(availableSeats || 0) <= 0;
+
+              let rowClass = "transition hover:bg-[#f6fafb]";
+              let statusText = `Còn ${availableSeats || 0} chỗ`;
+              let btnText = "Đặt ngay";
+              let btnClass = "bg-[#D0770B] hover:bg-[#004f58]";
+              let isDisabled = false;
+
+              if (isPast) {
+                rowClass = "transition hover:bg-gray-100 bg-gray-50/50 opacity-60 text-gray-400 grayscale";
+                statusText = "Đã khởi hành";
+                btnText = "Đã khởi hành";
+                btnClass = "pointer-events-none bg-gray-300 !text-gray-500";
+                isDisabled = true;
+              } else if (isSeatsOut) {
+                statusText = "Hết chỗ";
+                btnText = "Hết chỗ";
+                btnClass = "pointer-events-none bg-gray-400";
+                isDisabled = true;
+              }
 
               return (
                 <tr
                   key={departure.id || `${departure.startDate}-${index}`}
-                  className="transition hover:bg-[#f6fafb]"
+                  className={rowClass}
                 >
                   <td className="px-6 py-5 text-sm font-semibold text-[#3e494b]">
                     {index + 1}
@@ -1297,25 +1383,22 @@ function DepartureScheduleSection({
                     {formatPrice(tour.basePrice)}
                   </td>
 
-                  <td className="px-6 py-5 text-sm text-[#3e494b]">
-                    {isClosed ? "Hết chỗ" : `Còn ${availableSeats || 0} chỗ`}
+                  <td className="px-6 py-5 text-sm font-semibold">
+                    {statusText}
                   </td>
 
                   <td className="px-6 py-5 text-right">
                     <a
-href={`/booking?tourId=${tour.id}&departureId=${departure.id}&guests=${guests}${
-  promotionCode ? `&promotionCode=${encodeURIComponent(promotionCode)}` : ""
-}`}
-  className={`mr-2 inline-flex rounded-full px-4 py-2 text-xs font-bold !text-white ${
-    isClosed
-      ? "pointer-events-none bg-gray-400"
-      : "bg-[#D0770B] hover:bg-[#004f58]"
-  }`}
->
-  {isClosed ? "Hết chỗ" : "Đặt ngay"}
-</a>
-
-                    
+                      href={`/booking?tourId=${tour.id}&departureId=${departure.id}&guests=${guests}${
+                        promotionCode ? `&promotionCode=${encodeURIComponent(promotionCode)}` : ""
+                      }`}
+                      className={`mr-2 inline-flex rounded-full px-4 py-2 text-xs font-bold !text-white ${btnClass}`}
+                      onClick={(e) => {
+                        if (isDisabled) e.preventDefault();
+                      }}
+                    >
+                      {btnText}
+                    </a>
                   </td>
                 </tr>
               );

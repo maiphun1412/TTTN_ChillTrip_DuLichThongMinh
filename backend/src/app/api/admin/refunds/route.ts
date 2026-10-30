@@ -9,14 +9,28 @@ function serialize(data: any) {
   );
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const { searchParams } = new URL(request.url);
+    const startDate = searchParams.get("startDate");
+    const endDate = searchParams.get("endDate");
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+
+    let whereClause = "";
+    if (startDate && endDate && dateRegex.test(startDate) && dateRegex.test(endDate)) {
+      const nextDate = new Date(endDate);
+      nextDate.setDate(nextDate.getDate() + 1);
+      const nextDateStr = nextDate.toISOString().split("T")[0];
+      whereClause = `WHERE ISNULL(r.refund_at, r.created_at) >= '${startDate} 00:00:00' AND ISNULL(r.refund_at, r.created_at) < '${nextDateStr} 00:00:00'`;
+    }
+
     const refunds = await prisma.$queryRawUnsafe(`
       SELECT 
         r.*,
         b.booking_code
       FROM refunds r
       LEFT JOIN bookings b ON r.booking_id = b.id
+      ${whereClause}
       ORDER BY r.created_at DESC
     `);
 

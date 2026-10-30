@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import HomeHeader from "@/components/home/HomeHeader";
 import {
   getNotificationsApi,
@@ -39,9 +40,23 @@ export default function NotificationsPage() {
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [activeTab, setActiveTab] = useState<FilterKey>("ALL");
   const [loading, setLoading] = useState(true);
+  const [showLoginModal, setShowLoginModal] = useState(false);
+  const router = useRouter();
 
   async function loadNotifications() {
     try {
+      const token =
+        typeof window !== "undefined"
+          ? localStorage.getItem("access_token") ||
+            sessionStorage.getItem("access_token")
+          : null;
+
+      if (!token) {
+        setShowLoginModal(true);
+        setLoading(false);
+        return;
+      }
+
       setLoading(true);
       const data = await getNotificationsApi();
       setNotifications(data.notifications);
@@ -183,6 +198,74 @@ export default function NotificationsPage() {
           </div>
         )}
       </section>
+
+      {showLoginModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm animate-fade-in">
+          <div className="w-full max-w-md overflow-hidden rounded-[2rem] bg-white p-6 shadow-2xl transition-all scale-100 border border-[#ebeeef]">
+            <div className="flex items-center justify-between border-b border-[#ebeeef] pb-4">
+              <div className="flex items-center gap-2.5 text-[#00606c]">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="h-6 w-6 text-[#00606c]"
+                >
+                  <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
+                  <polyline points="10 17 15 12 10 7" />
+                  <line x1="15" y1="12" x2="3" y2="12" />
+                </svg>
+                <h3 className="text-lg font-black tracking-tight">Bạn chưa đăng nhập</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowLoginModal(false)}
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-[#f1f4f5] hover:bg-[#dfe3e4] text-[#3e494b] transition-colors"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="h-4 w-4"
+                >
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="my-6">
+              <p className="text-sm font-bold text-[#3e494b] leading-relaxed">
+                Bạn cần đăng nhập để xem thông báo. Bạn có muốn đăng nhập ngay không?
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowLoginModal(false)}
+                className="flex-1 rounded-full border border-[#dfe3e4] py-3 text-sm font-bold text-[#3e494b] hover:bg-[#f1f4f5] transition-colors"
+              >
+                Để sau
+              </button>
+              <button
+                type="button"
+                onClick={() => router.push("/login")}
+                className="flex-1 rounded-full bg-[#00606c] py-3 text-sm font-bold text-white hover:bg-[#007b8a] transition-colors shadow-md shadow-[#00606c]/10"
+              >
+                Đăng nhập
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

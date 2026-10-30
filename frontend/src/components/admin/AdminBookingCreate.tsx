@@ -16,10 +16,14 @@ import {
   Plus,
   Search,
   Tag,
+  Trash2,
   UserPlus,
   Users,
   Wallet,
+  X,
 } from "lucide-react";
+import { useSeatAvailability } from "@/hooks/useSeatAvailability";
+import SeatWarningModal from "@/components/shared/SeatWarningModal";
 
 const API_BASE_URL = "/backend-api";
 
@@ -98,6 +102,16 @@ const fallbackImage =
 
 function formatMoney(value: number) {
   return `${Number(value || 0).toLocaleString("vi-VN")} đ`;
+}
+export function isPastDeparture(startDateStr: string | null | undefined): boolean {
+  if (!startDateStr) return true;
+  const startDate = new Date(startDateStr);
+  startDate.setHours(0, 0, 0, 0);
+
+  const currentDate = new Date();
+  currentDate.setHours(0, 0, 0, 0);
+
+  return startDate.getTime() < currentDate.getTime();
 }
 
 function formatDate(value?: string | null) {
@@ -190,6 +204,45 @@ export default function AdminBookingCreate() {
   const [loadingDepartures, setLoadingDepartures] = useState(false);
   const [loadingPickupPoints, setLoadingPickupPoints] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+
+  const selectedDeparture = useMemo(
+    () => departures.find((item) => String(item.id) === String(form.departure_id)),
+    [departures, form.departure_id]
+  );
+
+  const availableSeats = useMemo(() => {
+    return selectedDeparture ? getDepartureAvailableSeats(selectedDeparture) : null;
+  }, [selectedDeparture]);
+
+  const isDeparturePast = useMemo(() => {
+    if (!selectedDeparture) return false;
+    const startDate = getDepartureStartDate(selectedDeparture);
+    return isPastDeparture(startDate);
+  }, [selectedDeparture]);
+
+  const isDepartureSeatsOut = useMemo(() => {
+    if (!selectedDeparture) return false;
+    return (availableSeats ?? 0) <= 0;
+  }, [selectedDeparture, availableSeats]);
+
+  const isDepartureInvalid = isDeparturePast || isDepartureSeatsOut;
+
+  const {
+    isSeatsInvalid,
+    warningInfo,
+    showWarningModal,
+    closeWarning,
+    totalGuests,
+  } = useSeatAvailability({
+    tourId: form.tour_id,
+    departureId: form.departure_id,
+    bookingType: "INDIVIDUAL",
+    adultCount: form.adult_count,
+    childCount: form.child_count,
+    expectedGuestCount: 0,
+    availableSeats: availableSeats,
+    isLoading: loadingDepartures,
+  });
 
   const selectedTour = useMemo(
     () => tours.find((item) => String(item.id) === String(form.tour_id)),
@@ -526,6 +579,11 @@ export default function AdminBookingCreate() {
       return;
     }
 
+    if (isSeatsInvalid) {
+      alert(`Số chỗ trống không đủ. Bạn chọn ${totalGuests} khách trong khi đợt khởi hành chỉ còn ${availableSeats} chỗ trống.`);
+      return;
+    }
+
     try {
       setSubmitting(true);
 
@@ -813,18 +871,35 @@ export default function AdminBookingCreate() {
                   {departures.map((departure) => {
                     const startDate = getDepartureStartDate(departure);
                     const endDate = getDepartureEndDate(departure);
-                    const availableSeats =
-                      getDepartureAvailableSeats(departure);
+                    const avSeats = getDepartureAvailableSeats(departure);
+
+                    const isPast = isPastDeparture(startDate);
+                    const isSeatsOut = avSeats <= 0;
+                    let suffix = "";
+                    if (isPast) suffix = " (Đã khởi hành)";
+                    else if (isSeatsOut) suffix = " (Hết chỗ)";
 
                     return (
-                      <option key={departure.id} value={departure.id}>
+                      <option
+                        key={departure.id}
+                        value={departure.id}
+                        disabled={isPast || isSeatsOut}
+                      >
                         {getDepartureCode(departure)} - {formatDate(startDate)}
                         {endDate ? ` đến ${formatDate(endDate)}` : ""} - còn{" "}
-                        {availableSeats} chỗ
+                        {avSeats} chỗ{suffix}
                       </option>
                     );
                   })}
                 </select>
+
+                {isDepartureInvalid && (
+                  <p className="mt-2 text-xs font-bold text-[#ba1a1a] animate-pulse">
+                    {isDeparturePast
+                      ? "* Lịch khởi hành này đã quá ngày khởi hành thực tế."
+                      : "* Lịch khởi hành này đã hết chỗ trống."}
+                  </p>
+                )}
               </div>
 
               <div>
@@ -899,6 +974,7 @@ export default function AdminBookingCreate() {
                 value={form.adult_count}
                 onMinus={() => changeCount("adult_count", "minus")}
                 onPlus={() => changeCount("adult_count", "plus")}
+                hasError={isSeatsInvalid}
               />
 
               <CounterRow
@@ -907,7 +983,14 @@ export default function AdminBookingCreate() {
                 value={form.child_count}
                 onMinus={() => changeCount("child_count", "minus")}
                 onPlus={() => changeCount("child_count", "plus")}
+                hasError={isSeatsInvalid}
               />
+
+              {isSeatsInvalid && (
+                <p className="mt-2 text-xs font-bold text-[#ba1a1a] px-4 animate-pulse">
+                  * Số khách vượt quá chỗ còn lại (Chỉ còn {availableSeats} chỗ). Vui lòng giảm ít nhất {warningInfo.excess} người.
+                </p>
+              )}
             </div>
           </section>
 
@@ -1029,11 +1112,19 @@ export default function AdminBookingCreate() {
               <div className="space-y-3">
                 <button
                   onClick={handleSubmit}
-                  disabled={submitting}
+                  disabled={submitting || isSeatsInvalid || isDepartureInvalid}
                   className="flex w-full items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#9b4500] to-[#fc8a40] py-4 font-bold text-white transition hover:scale-[1.02] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <CheckCircle2 size={20} />
-                  {submitting ? "Đang tạo..." : "Xác nhận & Tạo đơn"}
+                  {submitting
+                    ? "Đang tạo..."
+                    : isDeparturePast
+                    ? "Đã quá ngày"
+                    : isDepartureSeatsOut
+                    ? "Đợt đã hết chỗ"
+                    : isSeatsInvalid
+                    ? "Không đủ chỗ"
+                    : "Xác nhận & Tạo đơn"}
                 </button>
 
                 <button
@@ -1057,6 +1148,14 @@ export default function AdminBookingCreate() {
             </div>
           </div>
         </aside>
+
+        <SeatWarningModal
+          isOpen={showWarningModal}
+          onClose={closeWarning}
+          selectedCount={warningInfo.selected}
+          availableSeats={warningInfo.available}
+          excessCount={warningInfo.excess}
+        />
       </div>
     </div>
   );
@@ -1140,15 +1239,19 @@ function CounterRow({
   value,
   onMinus,
   onPlus,
+  hasError = false,
 }: {
   title: string;
   desc: string;
   value: number;
   onMinus: () => void;
   onPlus: () => void;
+  hasError?: boolean;
 }) {
   return (
-    <div className="flex items-center justify-between rounded-[2rem] bg-[#f1f4f5] p-4">
+    <div className={`flex items-center justify-between rounded-[2rem] p-4 transition ${
+      hasError ? "bg-[#ffdad6]/60 ring-2 ring-[#ba1a1a]/40" : "bg-[#f1f4f5]"
+    }`}>
       <div>
         <p className="font-bold text-[#181c1d]">{title}</p>
         <p className="text-sm text-[#3e494b]">{desc}</p>
