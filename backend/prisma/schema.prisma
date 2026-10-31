@@ -572,6 +572,29 @@ model pickup_points {
   departure_schedules departure_schedules @relation(fields: [departure_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "FK_pickup_points_departure")
 }
 
+/// Nhật ký truy cập dữ liệu cá nhân của khách (chỉ ghi thêm, trigger chặn sửa/xóa).
+/// Tạo kèm trigger bằng backend/prisma/sql/privacy-logs.sql
+model privacy_access_logs {
+  id                     BigInt   @id(map: "PK_privacy_access_logs") @default(autoincrement())
+  accessor_user_id       BigInt?
+  accessor_role          String?  @db.VarChar(30)
+  data_owner_user_id     BigInt?
+  data_owner_customer_id BigInt?
+  data_type              String   @db.VarChar(50)
+  action                 String   @default("VIEW", map: "DF_privacy_access_logs_action") @db.VarChar(30)
+  result                 String   @db.VarChar(10)
+  reason                 String?  @db.NVarChar(255)
+  purpose                String?  @db.VarChar(50)
+  departure_id           BigInt?
+  booking_id             BigInt?
+  ip_address             String?  @db.VarChar(50)
+  created_at             DateTime @default(now(), map: "DF_privacy_access_logs_created_at")
+
+  @@index([created_at], map: "IX_privacy_access_logs_created_at")
+  @@index([accessor_user_id], map: "IX_privacy_access_logs_accessor")
+  @@index([data_owner_user_id], map: "IX_privacy_access_logs_owner")
+}
+
 model promotion_tours {
   promotion_id BigInt
   tour_id      BigInt

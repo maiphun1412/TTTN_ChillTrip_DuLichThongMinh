@@ -1,6 +1,8 @@
 import { prisma } from "@/lib/prisma";
 import { ok, fail } from "@/lib/api-response";
 import { requireRole } from "@/lib/permissions";
+import { withPrivacyAccessLog, withAuditLog, paramId } from "@/lib/privacy/log";
+import { loadUserSnapshot, userUpdateAction } from "@/lib/privacy/snapshots";
 import { hashPassword } from "@/lib/auth";
 import { z } from "zod";
 
@@ -43,7 +45,7 @@ function makeCode(prefix: string) {
   return `${prefix}${Date.now()}`;
 }
 
-export async function GET(
+async function getHandler(
   req: Request,
   context: { params: Promise<{ id: string }> }
 ) {
@@ -87,7 +89,7 @@ export async function GET(
   }
 }
 
-export async function PUT(
+async function putHandler(
   req: Request,
   context: { params: Promise<{ id: string }> }
 ) {
@@ -269,7 +271,7 @@ export async function PUT(
   }
 }
 
-export async function DELETE(
+async function deleteHandler(
   req: Request,
   context: { params: Promise<{ id: string }> }
 ) {
@@ -311,9 +313,23 @@ export async function DELETE(
     return ok(null, "Xóa nhân sự thành công");
   } catch (error) {
     console.error("DELETE /api/admin/users/[id] error:", error);
+
+    // Tài khoản đã có lịch sử trong audit_logs thì không xóa cứng được (khóa ngoại),
+    // để giữ trách nhiệm giải trình. Hướng xử lý đúng là khóa tài khoản.
+    if ((error as { code?: string })?.code === "P2003") {
+      return fail(
+        "Tài khoản đã có lịch sử thao tác nên không thể xóa. Hãy khóa tài khoản thay vì xóa.",
+        409
+      );
+    }
+
     return fail(
       "Không thể xóa nhân sự. Tài khoản có thể đang liên kết dữ liệu khác.",
       500
     );
   }
 }
+
+export const GET = withPrivacyAccessLog(getHandler, { dataType: "STAFF_PROFILE", purpose: "ADMINISTRATION", owner: async (req, ctx) => ({ userId: await paramId(req, ctx) }) });
+export const PUT = withAuditLog(putHandler, { module: "USER_MANAGEMENT", entityName: "users", action: userUpdateAction, getId: paramId, load: loadUserSnapshot });
+export const DELETE = withAuditLog(deleteHandler, { module: "USER_MANAGEMENT", entityName: "users", action: "DELETE", getId: paramId, load: loadUserSnapshot });
