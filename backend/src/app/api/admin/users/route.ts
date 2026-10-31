@@ -1,6 +1,8 @@
 import { prisma } from "@/lib/prisma";
 import { ok, fail } from "@/lib/api-response";
 import { requireRole } from "@/lib/permissions";
+import { withPrivacyAccessLog, withAuditLog } from "@/lib/privacy/log";
+import { loadUserSnapshot } from "@/lib/privacy/snapshots";
 import { hashPassword } from "@/lib/auth";
 import { z } from "zod";
 
@@ -44,7 +46,7 @@ function makeCode(prefix: string) {
   return `${prefix}${Date.now()}`;
 }
 
-export async function GET(req: Request) {
+async function getHandler(req: Request) {
   const auth = await requireRole(req, ["ADMIN"]);
   if (!auth.ok) {
     return fail(
@@ -102,7 +104,7 @@ export async function GET(req: Request) {
   }
 }
 
-export async function POST(req: Request) {
+async function postHandler(req: Request) {
   const auth = await requireRole(req, ["ADMIN"]);
   if (!auth.ok) {
     return fail(
@@ -235,3 +237,6 @@ export async function POST(req: Request) {
     return fail("Không thể tạo tài khoản", 500);
   }
 }
+
+export const GET = withPrivacyAccessLog(getHandler, { dataType: "STAFF_LIST", purpose: "ADMINISTRATION", listOwners: "user" });
+export const POST = withAuditLog(postHandler, { module: "USER_MANAGEMENT", entityName: "users", action: "CREATE", load: loadUserSnapshot });

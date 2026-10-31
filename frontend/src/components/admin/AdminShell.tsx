@@ -19,6 +19,7 @@ import {
   Star,
   FileText,
   User,
+  ShieldCheck,
 } from "lucide-react";
 
 type AdminShellProps = {
@@ -49,6 +50,8 @@ const menuItems = [
   { label: "Đánh giá", icon: Star, href: "/admin/reviews" },
 
   { label: "Quản lý blog", icon: FileText, href: "/admin/articles" },
+
+  { label: "Nhật ký hoạt động", icon: ShieldCheck, href: "/admin/privacy-logs" },
 ];
 
 type AdminProfile = {
@@ -150,23 +153,23 @@ export default function AdminShell({ children }: AdminShellProps) {
   return (
     <div className="min-h-screen bg-[#f6fafb] text-[#181c1d]">
       <div className="flex">
-        <aside className="fixed left-0 top-0 z-40 hidden h-full w-72 flex-col rounded-r-[3rem] bg-[#f1f4f5] px-4 py-8 tracking-tight lg:flex">
-          <div className="mb-10 flex items-center gap-3 px-6">
-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#007b8a] shadow-lg">
-              <Plane size={18} className="text-white" />
+        <aside className="fixed left-0 top-0 z-40 hidden h-full w-72 flex-col overflow-y-auto rounded-r-[3rem] bg-gradient-to-b from-[#006875] to-[#004a54] px-4 py-8 font-sans tracking-tight shadow-[8px_0_32px_rgba(0,74,84,0.25)] lg:flex">
+          <div className="mb-8 flex items-center gap-3 px-5">
+            <div className="flex h-11 w-11 items-center justify-center rounded-full bg-white shadow-lg">
+              <Plane size={20} className="text-[#007b8a]" />
             </div>
 
             <div>
-              <h1 className="text-2xl font-bold tracking-tighter text-[#007B8A]">
+              <h1 className="text-2xl font-bold tracking-tight text-white">
                 ChillTrip
               </h1>
-              <p className="text-[10px] font-bold uppercase tracking-widest text-[#3e494b]">
+              <p className="text-[11px] font-bold uppercase tracking-widest text-[#9fe0e6]">
                 Management Portal
               </p>
             </div>
           </div>
 
-          <nav className="flex-1 space-y-2">
+          <nav className="flex-1 space-y-1.5">
             {menuItems.map((item) => {
               const Icon = item.icon;
               const isActive = pathname === item.href;
@@ -175,30 +178,30 @@ export default function AdminShell({ children }: AdminShellProps) {
                 <a
                   key={item.label}
                   href={item.href}
-                  className={`flex w-full items-center gap-4 px-6 py-3 text-left text-sm transition-all duration-300 ${
+                  className={`flex w-full items-center gap-4 rounded-full px-5 py-3 text-left text-[15px] transition-all duration-200 ${
                     isActive
-                      ? "rounded-full bg-[#007B8A] font-bold text-white shadow-lg shadow-cyan-900/10"
-                      : "text-[#3e494b] hover:scale-[1.02] hover:text-[#007B8A]"
+                      ? "bg-white font-bold text-[#006875] shadow-lg shadow-black/15"
+                      : "font-medium text-[#e2f5f7] hover:bg-white/12 hover:text-white"
                   }`}
                 >
-                  <Icon size={18} />
+                  <Icon size={20} />
                   <span>{item.label}</span>
                 </a>
               );
             })}
           </nav>
 
-          <div className="mt-auto space-y-2 border-t border-[#bdc8cb]/20 pt-6">
-            <button className="flex w-full items-center gap-4 px-6 py-3 text-left text-sm text-[#3e494b] transition-all duration-300 hover:scale-[1.02] hover:text-[#007B8A]">
-              <Settings size={18} />
+          <div className="mt-6 space-y-1.5 border-t border-white/15 pt-6">
+            <button className="flex w-full items-center gap-4 rounded-full px-5 py-3 text-left text-[15px] font-medium text-[#e2f5f7] transition-all duration-200 hover:bg-white/12 hover:text-white">
+              <Settings size={20} />
               <span>Cài đặt</span>
             </button>
 
-            <button 
+            <button
               onClick={handleLogout}
-              className="flex w-full items-center gap-4 px-6 py-3 text-left text-sm text-[#3e494b] transition-all duration-300 hover:scale-[1.02] hover:text-[#007B8A]"
+              className="flex w-full items-center gap-4 rounded-full px-5 py-3 text-left text-[15px] font-medium text-[#ffd9c2] transition-all duration-200 hover:bg-white/12 hover:text-white"
             >
-              <LogOut size={18} />
+              <LogOut size={20} />
               <span>Đăng xuất</span>
             </button>
           </div>

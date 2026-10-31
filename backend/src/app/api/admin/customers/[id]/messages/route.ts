@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { fail } from "@/lib/api-response";
 import { requireRole } from "@/lib/permissions";
+import { withPrivacyAccessLog, withAuditLog, paramId } from "@/lib/privacy/log";
 
 function serialize(data: any) {
   return JSON.parse(
@@ -11,7 +12,7 @@ function serialize(data: any) {
   );
 }
 
-export async function GET(
+async function getHandler(
   req: Request,
   context: { params: Promise<{ id: string }> }
 ) {
@@ -61,7 +62,7 @@ export async function GET(
   }
 }
 
-export async function POST(
+async function postHandler(
   req: Request,
   context: { params: Promise<{ id: string }> }
 ) {
@@ -126,3 +127,6 @@ export async function POST(
     );
   }
 }
+
+export const GET = withPrivacyAccessLog(getHandler, { dataType: "MESSAGE", purpose: "CUSTOMER_SUPPORT", owner: async (req, ctx) => ({ customerId: await paramId(req, ctx) }) });
+export const POST = withAuditLog(postHandler, { module: "CUSTOMER_MANAGEMENT", entityName: "customer_messages", action: "SEND_MESSAGE", getId: paramId });

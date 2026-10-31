@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { fail } from "@/lib/api-response";
 import { requireRole } from "@/lib/permissions";
+import { withPrivacyAccessLog, withAuditLog, paramId } from "@/lib/privacy/log";
+import { loadCustomerSnapshot } from "@/lib/privacy/snapshots";
 
 function serialize(data: any) {
   return JSON.parse(
@@ -11,7 +13,7 @@ function serialize(data: any) {
   );
 }
 
-export async function GET(
+async function getHandler(
   req: Request,
   context: { params: Promise<{ id: string }> }
 ) {
@@ -99,7 +101,7 @@ export async function GET(
   }
 }
 
-export async function PUT(
+async function putHandler(
   req: Request,
   context: { params: Promise<{ id: string }> }
 ) {
@@ -183,7 +185,7 @@ export async function PUT(
   }
 }
 
-export async function DELETE(
+async function deleteHandler(
   req: Request,
   context: { params: Promise<{ id: string }> }
 ) {
@@ -240,3 +242,7 @@ export async function DELETE(
     );
   }
 }
+
+export const GET = withPrivacyAccessLog(getHandler, { dataType: "CUSTOMER_PROFILE", purpose: "ADMINISTRATION", owner: async (req, ctx) => ({ customerId: await paramId(req, ctx) }) });
+export const PUT = withAuditLog(putHandler, { module: "CUSTOMER_MANAGEMENT", entityName: "customers", action: "UPDATE", getId: paramId, load: loadCustomerSnapshot });
+export const DELETE = withAuditLog(deleteHandler, { module: "CUSTOMER_MANAGEMENT", entityName: "customers", action: "DELETE", getId: paramId, load: loadCustomerSnapshot });

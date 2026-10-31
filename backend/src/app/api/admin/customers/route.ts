@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { fail } from "@/lib/api-response";
 import { requireRole } from "@/lib/permissions";
+import { withPrivacyAccessLog, withAuditLog } from "@/lib/privacy/log";
+import { loadCustomerSnapshot } from "@/lib/privacy/snapshots";
 
 function serialize(data: any) {
   return JSON.parse(
@@ -15,7 +17,7 @@ function escapeSql(value: string) {
   return value.replace(/'/g, "''");
 }
 
-export async function GET(req: NextRequest) {
+async function getHandler(req: NextRequest) {
   const auth = await requireRole(req, ["ADMIN"]);
   if (!auth.ok) {
     return fail(
@@ -100,7 +102,7 @@ export async function GET(req: NextRequest) {
   }
 }
 
-export async function POST(req: Request) {
+async function postHandler(req: Request) {
   const auth = await requireRole(req, ["ADMIN"]);
   if (!auth.ok) {
     return fail(
@@ -174,3 +176,6 @@ export async function POST(req: Request) {
     );
   }
 }
+
+export const GET = withPrivacyAccessLog(getHandler, { dataType: "CUSTOMER_LIST", purpose: "ADMINISTRATION", listOwners: "customer" });
+export const POST = withAuditLog(postHandler, { module: "CUSTOMER_MANAGEMENT", entityName: "customers", action: "CREATE", load: loadCustomerSnapshot });
