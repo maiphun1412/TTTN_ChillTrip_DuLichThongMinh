@@ -246,7 +246,7 @@ export async function PATCH(
   req: Request,
   context: { params: Promise<{ id: string }> }
 ) {
-  const auth = requireRole(req, ["ADMIN", "STAFF"]);
+  const auth = await requireRole(req, ["ADMIN", "STAFF"]);
 
   if (!auth.ok) {
     return fail(
@@ -359,7 +359,7 @@ export async function DELETE(
   req: Request,
   context: { params: Promise<{ id: string }> }
 ) {
-  const auth = requireRole(req, ["ADMIN"]);
+  const auth = await requireRole(req, ["ADMIN"]);
 
   if (!auth.ok) {
     return fail(

@@ -162,7 +162,7 @@ export async function GET(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const auth = requireRole(req, ["ADMIN"]);
+  const auth = await requireRole(req, ["ADMIN"]);
 
   if (!auth.ok) {
     return fail(
@@ -198,7 +198,7 @@ export async function PUT(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const auth = requireRole(req, ["ADMIN"]);
+  const auth = await requireRole(req, ["ADMIN"]);
 
   if (!auth.ok) {
     return fail(
@@ -404,7 +404,7 @@ export async function DELETE(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const auth = requireRole(req, ["ADMIN"]);
+  const auth = await requireRole(req, ["ADMIN"]);
 
   if (!auth.ok) {
     return fail(

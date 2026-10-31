@@ -47,7 +47,7 @@ departures: z
 });
 
 export async function GET(req: Request) {
-  const auth = requireRole(req, ["ADMIN"]);
+  const auth = await requireRole(req, ["ADMIN"]);
 
   if (!auth.ok) {
     return fail(
@@ -89,7 +89,7 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const auth = requireRole(req, ["ADMIN"]);
+  const auth = await requireRole(req, ["ADMIN"]);
 
   if (!auth.ok) {
     return fail(

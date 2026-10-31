@@ -45,7 +45,7 @@ function makeCode(prefix: string) {
 }
 
 export async function GET(req: Request) {
-  const auth = requireRole(req, ["ADMIN"]);
+  const auth = await requireRole(req, ["ADMIN"]);
   if (!auth.ok) {
     return fail(
       auth.reason === "UNAUTHORIZED" ? "Chưa đăng nhập" : "Không có quyền",
@@ -103,7 +103,7 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const auth = requireRole(req, ["ADMIN"]);
+  const auth = await requireRole(req, ["ADMIN"]);
   if (!auth.ok) {
     return fail(
       auth.reason === "UNAUTHORIZED" ? "Chưa đăng nhập" : "Không có quyền",
