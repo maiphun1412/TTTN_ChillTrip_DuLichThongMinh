@@ -21,6 +21,12 @@ import {
   Utensils,
   X,
 } from "lucide-react";
+import ExportTimeFilter, {
+  TimeFilterOptions,
+  formatReportTimeLabel,
+  formatReportFilenameSuffix,
+  filterItemsByTime,
+} from "@/components/shared/ExportTimeFilter";
 
 const API_BASE_URL = "/backend-api";
 
@@ -93,6 +99,21 @@ export default function AdminSuppliers() {
   const [activeFilter, setActiveFilter] = useState("");
   const [loading, setLoading] = useState(true);
   const [showExportPreview, setShowExportPreview] = useState(false);
+
+  const [timeFilter, setTimeFilter] = useState<TimeFilterOptions>({
+    type: "month",
+    month: new Date().getMonth() + 1,
+    quarter: 1,
+    year: new Date().getFullYear(),
+  });
+
+  const filteredSuppliersForExport = useMemo(() => {
+    return filterItemsByTime(
+      suppliers,
+      (item) => item.created_at,
+      timeFilter
+    );
+  }, [suppliers, timeFilter]);
 
   async function loadData() {
     try {
@@ -205,8 +226,14 @@ export default function AdminSuppliers() {
     }
   }
 
-  function exportCsv() {
+  function exportCsv(dataToExport: Supplier[]) {
+    const timeLabel = formatReportTimeLabel(timeFilter);
+    const fileSuffix = formatReportFilenameSuffix(timeFilter);
+
     const rows = [
+      [`BÁO CÁO DANH SÁCH NHÀ CUNG CẤP - ${timeLabel.toUpperCase()}`],
+      [`Ngày lập`, new Date().toLocaleDateString("vi-VN")],
+      [],
       [
         "Mã nhà cung cấp",
         "Tên nhà cung cấp",
@@ -220,7 +247,7 @@ export default function AdminSuppliers() {
         "Ngày tạo",
         "Ghi chú",
       ],
-      ...suppliers.map((item) => [
+      ...dataToExport.map((item) => [
         item.supplier_code,
         item.supplier_name,
         getSupplierTypeLabel(item.supplier_type),
@@ -248,14 +275,15 @@ export default function AdminSuppliers() {
     const a = document.createElement("a");
 
     a.href = url;
-    a.download = `bao-cao-nha-cung-cap-${Date.now()}.csv`;
+    a.download = `bao-cao-nha-cung-cap-${fileSuffix}.csv`;
     a.click();
 
     URL.revokeObjectURL(url);
   }
 
-  function exportPdf() {
-    const rows = suppliers
+  function exportPdf(dataToExport: Supplier[]) {
+    const timeLabel = formatReportTimeLabel(timeFilter);
+    const tableRows = dataToExport
       .map(
         (item, index) => `
           <tr>
@@ -274,28 +302,35 @@ export default function AdminSuppliers() {
       )
       .join("");
 
+    // Calculate dynamic stats
+    const total = dataToExport.length;
+    const active = dataToExport.filter((s) => s.is_active).length;
+    const inactive = total - active;
+    const activeRate = total > 0 ? Math.round((active / total) * 100) : 0;
+
     const html = `
       <!doctype html>
       <html>
         <head>
           <meta charset="utf-8" />
-          <title>Báo cáo nhà cung cấp</title>
+          <title>Báo cáo danh sách nhà cung cấp ${timeLabel}</title>
           <style>
             * { box-sizing: border-box; }
             body {
-              font-family: "Times New Roman", Times, serif;
-              color: #000;
-              padding: 28px;
+              font-family: Arial, sans-serif;
+              color: #181c1d;
+              padding: 20px;
             }
             h1 {
               text-align: center;
-              font-size: 22px;
-              margin: 0 0 8px;
-              text-transform: uppercase;
+              font-size: 24px;
+              color: #00606c;
+              margin: 0 0 5px;
             }
             .sub {
               text-align: center;
-              font-size: 14px;
+              font-size: 13px;
+              color: #5f6b6d;
               margin-bottom: 20px;
             }
             .summary {
@@ -303,48 +338,46 @@ export default function AdminSuppliers() {
               grid-template-columns: repeat(4, 1fr);
               gap: 8px;
               margin-bottom: 18px;
-              font-size: 13px;
+              font-size: 12px;
             }
             .summary div {
-              border: 1px solid #000;
+              border: 1px solid #dfe3e4;
               padding: 8px;
               text-align: center;
+              background-color: #f6fafb;
             }
             table {
               width: 100%;
               border-collapse: collapse;
-              font-size: 12px;
+              font-size: 11px;
             }
             th, td {
-              border: 1px solid #000;
+              border: 1px solid #dfe3e4;
               padding: 6px 7px;
               vertical-align: top;
             }
             th {
               text-align: center;
               font-weight: bold;
-              background: #f2f2f2;
+              background: #f1f4f5;
+              color: #3e494b;
             }
             .footer {
               margin-top: 24px;
-              display: flex;
-              justify-content: flex-end;
-              font-size: 14px;
-            }
-            @media print {
-              body { padding: 18px; }
+              text-align: right;
+              font-size: 12px;
             }
           </style>
         </head>
         <body>
           <h1>Báo cáo danh sách nhà cung cấp</h1>
-          <div class="sub">Ngày xuất: ${new Date().toLocaleDateString("vi-VN")}</div>
+          <div class="sub">Báo cáo: ${timeLabel} • Ngày xuất: ${new Date().toLocaleDateString("vi-VN")}</div>
 
           <div class="summary">
-            <div><b>Tổng NCC</b><br/>${stats.total}</div>
-            <div><b>Hoạt động</b><br/>${stats.active}</div>
-            <div><b>Ngưng</b><br/>${stats.inactive}</div>
-            <div><b>Tỷ lệ hoạt động</b><br/>${stats.activeRate}%</div>
+            <div><b>Tổng NCC</b><br/>${total}</div>
+            <div><b>Hoạt động</b><br/>${active}</div>
+            <div><b>Ngưng</b><br/>${inactive}</div>
+            <div><b>Tỷ lệ hoạt động</b><br/>${activeRate}%</div>
           </div>
 
           <table>
@@ -363,7 +396,7 @@ export default function AdminSuppliers() {
               </tr>
             </thead>
             <tbody>
-              ${rows}
+              ${tableRows}
             </tbody>
           </table>
 
@@ -394,6 +427,12 @@ export default function AdminSuppliers() {
   }
 
   if (showExportPreview) {
+    // Re-calculate stats based on filtered list for preview display
+    const total = filteredSuppliersForExport.length;
+    const active = filteredSuppliersForExport.filter((s) => s.is_active).length;
+    const inactive = total - active;
+    const activeRate = total > 0 ? Math.round((active / total) * 100) : 0;
+
     return (
       <div className="space-y-8">
         <section className="flex flex-col justify-between gap-5 xl:flex-row xl:items-end">
@@ -419,7 +458,7 @@ export default function AdminSuppliers() {
             </button>
 
             <button
-              onClick={exportCsv}
+              onClick={() => exportCsv(filteredSuppliersForExport)}
               className="inline-flex items-center gap-2 rounded-full bg-white px-6 py-3 font-black text-[#00606c] shadow-sm transition hover:bg-[#9defff]/30"
             >
               <Download size={18} />
@@ -427,7 +466,7 @@ export default function AdminSuppliers() {
             </button>
 
             <button
-              onClick={exportPdf}
+              onClick={() => exportPdf(filteredSuppliersForExport)}
               className="inline-flex items-center gap-2 rounded-full bg-[#00606c] px-6 py-3 font-black text-white shadow-lg shadow-[#00606c]/20 transition hover:scale-105"
             >
               <FileText size={18} />
@@ -436,11 +475,16 @@ export default function AdminSuppliers() {
           </div>
         </section>
 
+        {/* Bộ chọn thời gian nhúng trực tiếp lên giao diện preview */}
+        <div className="rounded-[2.5rem] bg-[#f6fafb] p-6 ring-1 ring-[#ebeeef] shadow-sm">
+          <ExportTimeFilter value={timeFilter} onChange={setTimeFilter} />
+        </div>
+
         <section className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-4">
-          <MetricCard title="Tổng NCC" value={stats.total} icon={Building2} />
-          <MetricCard title="Hoạt động" value={stats.active} icon={CheckCircle2} />
-          <MetricCard title="Ngưng hoạt động" value={stats.inactive} icon={X} />
-          <MetricCard title="Tỷ lệ hoạt động" value={`${stats.activeRate}%`} icon={FileText} />
+          <MetricCard title="Tổng NCC" value={total} icon={Building2} />
+          <MetricCard title="Hoạt động" value={active} icon={CheckCircle2} />
+          <MetricCard title="Ngưng hoạt động" value={inactive} icon={X} />
+          <MetricCard title="Tỷ lệ hoạt động" value={`${activeRate}%`} icon={FileText} />
         </section>
 
         <section className="overflow-hidden rounded-[2.5rem] border border-[#bdc8cb]/10 bg-white shadow-xl shadow-[#00606c]/5">
@@ -449,7 +493,7 @@ export default function AdminSuppliers() {
               Dữ liệu chuẩn bị xuất
             </h2>
             <p className="mt-1 text-sm font-semibold text-[#6e797b]">
-              Tổng cộng {suppliers.length} nhà cung cấp theo bộ lọc hiện tại.
+              Tổng cộng {filteredSuppliersForExport.length} nhà cung cấp trong khoảng thời gian được chọn.
             </p>
           </div>
 
@@ -471,17 +515,17 @@ export default function AdminSuppliers() {
               </thead>
 
               <tbody className="divide-y divide-[#bdc8cb]/10">
-                {suppliers.length === 0 ? (
+                {filteredSuppliersForExport.length === 0 ? (
                   <tr>
                     <td
                       colSpan={10}
                       className="px-6 py-12 text-center text-sm font-bold text-[#6e797b]"
                     >
-                      Không có dữ liệu để xuất báo cáo.
+                      Không có dữ liệu nhà cung cấp trong khoảng thời gian được chọn.
                     </td>
                   </tr>
                 ) : (
-                  suppliers.map((item, index) => (
+                  filteredSuppliersForExport.map((item, index) => (
                     <tr key={item.id}>
                       <td className="px-6 py-4 text-sm font-bold">{index + 1}</td>
                       <td className="px-6 py-4 text-sm font-bold">

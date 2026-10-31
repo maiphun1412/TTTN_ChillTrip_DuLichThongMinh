@@ -98,104 +98,249 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const keyword = searchParams.get("keyword") || "";
     const status = searchParams.get("status") || "ALL";
+    const startDate = searchParams.get("startDate");
+    const endDate = searchParams.get("endDate");
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
 
-    const summaryRows = await prisma.$queryRaw<any[]>`
-      SELECT
-        COALESCE(SUM(CASE 
-          WHEN p.payment_status = 'PAID'
-            AND MONTH(ISNULL(p.paid_at, p.created_at)) = MONTH(GETDATE())
-            AND YEAR(ISNULL(p.paid_at, p.created_at)) = YEAR(GETDATE())
-          THEN p.amount ELSE 0 END), 0) AS monthRevenue,
+    let hasFilter = false;
+    let startStr = "";
+    let nextEndStr = "";
+    if (startDate && endDate && dateRegex.test(startDate) && dateRegex.test(endDate)) {
+      hasFilter = true;
+      startStr = startDate;
+      const nextDate = new Date(endDate);
+      nextDate.setDate(nextDate.getDate() + 1);
+      nextEndStr = nextDate.toISOString().split("T")[0];
+    }
 
-        COALESCE(SUM(CASE 
-          WHEN p.payment_status = 'PENDING'
-          THEN p.amount ELSE 0 END), 0) AS pendingPaymentAmount,
+    let summaryRows;
+    if (hasFilter) {
+      summaryRows = await prisma.$queryRawUnsafe<any[]>(`
+        SELECT
+          COALESCE(SUM(CASE 
+            WHEN p.payment_status = 'PAID'
+              AND ISNULL(p.paid_at, p.created_at) >= '${startStr} 00:00:00'
+              AND ISNULL(p.paid_at, p.created_at) < '${nextEndStr} 00:00:00'
+            THEN p.amount ELSE 0 END), 0) AS monthRevenue,
 
-        COALESCE(SUM(CASE 
-          WHEN p.payment_status = 'PAID'
-          THEN p.amount ELSE 0 END), 0) AS paidAmount,
+          COALESCE(SUM(CASE 
+            WHEN p.payment_status = 'PENDING'
+              AND p.created_at >= '${startStr} 00:00:00'
+              AND p.created_at < '${nextEndStr} 00:00:00'
+            THEN p.amount ELSE 0 END), 0) AS pendingPaymentAmount,
 
-        COALESCE((SELECT SUM(remaining_amount) FROM debts WHERE remaining_amount > 0), 0) AS unpaidDebtAmount,
+          COALESCE(SUM(CASE 
+            WHEN p.payment_status = 'PAID'
+              AND ISNULL(p.paid_at, p.created_at) >= '${startStr} 00:00:00'
+              AND ISNULL(p.paid_at, p.created_at) < '${nextEndStr} 00:00:00'
+            THEN p.amount ELSE 0 END), 0) AS paidAmount,
 
-        COALESCE((SELECT SUM(refund_amount) FROM refunds WHERE refund_status <> 'REJECTED'), 0) AS refundAmount
-      FROM payments p
-    `;
+          COALESCE((
+            SELECT SUM(d.remaining_amount) 
+            FROM debts d 
+            INNER JOIN bookings b ON b.id = d.booking_id
+            WHERE d.remaining_amount > 0
+              AND b.booked_at >= '${startStr} 00:00:00'
+              AND b.booked_at < '${nextEndStr} 00:00:00'
+          ), 0) AS unpaidDebtAmount,
+
+          COALESCE((
+            SELECT SUM(r.refund_amount) 
+            FROM refunds r 
+            WHERE r.refund_status <> 'REJECTED'
+              AND ISNULL(r.refund_at, r.created_at) >= '${startStr} 00:00:00'
+              AND ISNULL(r.refund_at, r.created_at) < '${nextEndStr} 00:00:00'
+          ), 0) AS refundAmount
+        FROM payments p
+      `);
+    } else {
+      summaryRows = await prisma.$queryRaw<any[]>`
+        SELECT
+          COALESCE(SUM(CASE 
+            WHEN p.payment_status = 'PAID'
+              AND MONTH(ISNULL(p.paid_at, p.created_at)) = MONTH(GETDATE())
+              AND YEAR(ISNULL(p.paid_at, p.created_at)) = YEAR(GETDATE())
+            THEN p.amount ELSE 0 END), 0) AS monthRevenue,
+
+          COALESCE(SUM(CASE 
+            WHEN p.payment_status = 'PENDING'
+            THEN p.amount ELSE 0 END), 0) AS pendingPaymentAmount,
+
+          COALESCE(SUM(CASE 
+            WHEN p.payment_status = 'PAID'
+            THEN p.amount ELSE 0 END), 0) AS paidAmount,
+
+          COALESCE((SELECT SUM(remaining_amount) FROM debts WHERE remaining_amount > 0), 0) AS unpaidDebtAmount,
+
+          COALESCE((SELECT SUM(refund_amount) FROM refunds WHERE refund_status <> 'REJECTED'), 0) AS refundAmount
+        FROM payments p
+      `;
+    }
 
     const summary = summaryRows[0] || {};
     const monthRevenue = toNumber(summary.monthRevenue);
     const refundAmount = toNumber(summary.refundAmount);
 
-    const transactions = await prisma.$queryRaw<any[]>`
-      SELECT TOP 100
-        p.id,
-        p.payment_code AS paymentCode,
-        b.booking_code AS bookingCode,
-        c.full_name AS customerName,
-        t.tour_name AS tourName,
-        p.amount,
-        p.payment_method AS paymentMethod,
-        p.payment_status AS paymentStatus,
-        p.transaction_code AS transactionCode,
-        p.paid_at AS paidAt,
-        p.created_at AS createdAt
-      FROM payments p
-      INNER JOIN bookings b ON b.id = p.booking_id
-      INNER JOIN customers c ON c.id = b.customer_id
-      INNER JOIN tours t ON t.id = b.tour_id
-      WHERE
-        (${status} = 'ALL' OR p.payment_status = ${status})
-        AND (
-          ${keyword} = ''
-          OR p.payment_code LIKE '%' + ${keyword} + '%'
-          OR b.booking_code LIKE '%' + ${keyword} + '%'
-          OR c.full_name LIKE N'%' + ${keyword} + N'%'
-          OR t.tour_name LIKE N'%' + ${keyword} + N'%'
-        )
-      ORDER BY p.created_at DESC
-    `;
+    let transactions;
+    if (hasFilter) {
+      transactions = await prisma.$queryRawUnsafe<any[]>(`
+        SELECT TOP 100
+          p.id,
+          p.payment_code AS paymentCode,
+          b.booking_code AS bookingCode,
+          c.full_name AS customerName,
+          t.tour_name AS tourName,
+          p.amount,
+          p.payment_method AS paymentMethod,
+          p.payment_status AS paymentStatus,
+          p.transaction_code AS transactionCode,
+          p.paid_at AS paidAt,
+          p.created_at AS createdAt
+        FROM payments p
+        INNER JOIN bookings b ON b.id = p.booking_id
+        INNER JOIN customers c ON c.id = b.customer_id
+        INNER JOIN tours t ON t.id = b.tour_id
+        WHERE
+          (CAST('${status}' AS VARCHAR(50)) = 'ALL' OR p.payment_status = CAST('${status}' AS VARCHAR(50)))
+          AND (
+            CAST('${keyword}' AS NVARCHAR(100)) = ''
+            OR p.payment_code LIKE '%' + CAST('${keyword}' AS NVARCHAR(100)) + '%'
+            OR b.booking_code LIKE '%' + CAST('${keyword}' AS NVARCHAR(100)) + '%'
+            OR c.full_name LIKE N'%' + CAST('${keyword}' AS NVARCHAR(100)) + N'%'
+            OR t.tour_name LIKE N'%' + CAST('${keyword}' AS NVARCHAR(100)) + N'%'
+          )
+          AND ISNULL(p.paid_at, p.created_at) >= '${startStr} 00:00:00'
+          AND ISNULL(p.paid_at, p.created_at) < '${nextEndStr} 00:00:00'
+        ORDER BY p.created_at DESC
+      `);
+    } else {
+      transactions = await prisma.$queryRaw<any[]>`
+        SELECT TOP 100
+          p.id,
+          p.payment_code AS paymentCode,
+          b.booking_code AS bookingCode,
+          c.full_name AS customerName,
+          t.tour_name AS tourName,
+          p.amount,
+          p.payment_method AS paymentMethod,
+          p.payment_status AS paymentStatus,
+          p.transaction_code AS transactionCode,
+          p.paid_at AS paidAt,
+          p.created_at AS createdAt
+        FROM payments p
+        INNER JOIN bookings b ON b.id = p.booking_id
+        INNER JOIN customers c ON c.id = b.customer_id
+        INNER JOIN tours t ON t.id = b.tour_id
+        WHERE
+          (${status} = 'ALL' OR p.payment_status = ${status})
+          AND (
+            ${keyword} = ''
+            OR p.payment_code LIKE '%' + ${keyword} + '%'
+            OR b.booking_code LIKE '%' + ${keyword} + '%'
+            OR c.full_name LIKE N'%' + ${keyword} + N'%'
+            OR t.tour_name LIKE N'%' + ${keyword} + N'%'
+          )
+        ORDER BY p.created_at DESC
+      `;
+    }
 
-    const debts = await prisma.$queryRaw<any[]>`
-      SELECT TOP 100
-        d.id,
-        b.id AS bookingId,
-        b.booking_code AS bookingCode,
-        c.full_name AS customerName,
-        c.phone AS customerPhone,
-        c.email AS customerEmail,
-        d.total_amount AS totalAmount,
-        d.paid_amount AS paidAmount,
-        d.remaining_amount AS remainingAmount,
-        d.due_date AS dueDate,
-        d.debt_status AS debtStatus,
-        d.notes,
-        CASE
-          WHEN d.due_date IS NOT NULL AND d.remaining_amount > 0 AND d.due_date < CAST(GETDATE() AS DATE)
-          THEN DATEDIFF(DAY, d.due_date, CAST(GETDATE() AS DATE))
-          ELSE 0
-        END AS overdueDays
-      FROM debts d
-      INNER JOIN bookings b ON b.id = d.booking_id
-      INNER JOIN customers c ON c.id = d.customer_id
-      WHERE d.remaining_amount > 0
-      ORDER BY overdueDays DESC, d.updated_at DESC
-    `;
+    let debts;
+    if (hasFilter) {
+      debts = await prisma.$queryRawUnsafe<any[]>(`
+        SELECT TOP 100
+          d.id,
+          b.id AS bookingId,
+          b.booking_code AS bookingCode,
+          b.booked_at AS bookedAt,
+          c.full_name AS customerName,
+          c.phone AS customerPhone,
+          c.email AS customerEmail,
+          d.total_amount AS totalAmount,
+          d.paid_amount AS paidAmount,
+          d.remaining_amount AS remainingAmount,
+          d.due_date AS dueDate,
+          d.debt_status AS debtStatus,
+          d.notes,
+          CASE
+            WHEN d.due_date IS NOT NULL AND d.remaining_amount > 0 AND d.due_date < CAST(GETDATE() AS DATE)
+            THEN DATEDIFF(DAY, d.due_date, CAST(GETDATE() AS DATE))
+            ELSE 0
+          END AS overdueDays
+        FROM debts d
+        INNER JOIN bookings b ON b.id = d.booking_id
+        INNER JOIN customers c ON c.id = d.customer_id
+        WHERE d.remaining_amount > 0
+          AND b.booked_at >= '${startStr} 00:00:00'
+          AND b.booked_at < '${nextEndStr} 00:00:00'
+        ORDER BY overdueDays DESC, d.updated_at DESC
+      `);
+    } else {
+      debts = await prisma.$queryRaw<any[]>`
+        SELECT TOP 100
+          d.id,
+          b.id AS bookingId,
+          b.booking_code AS bookingCode,
+          b.booked_at AS bookedAt,
+          c.full_name AS customerName,
+          c.phone AS customerPhone,
+          c.email AS customerEmail,
+          d.total_amount AS totalAmount,
+          d.paid_amount AS paidAmount,
+          d.remaining_amount AS remainingAmount,
+          d.due_date AS dueDate,
+          d.debt_status AS debtStatus,
+          d.notes,
+          CASE
+            WHEN d.due_date IS NOT NULL AND d.remaining_amount > 0 AND d.due_date < CAST(GETDATE() AS DATE)
+            THEN DATEDIFF(DAY, d.due_date, CAST(GETDATE() AS DATE))
+            ELSE 0
+          END AS overdueDays
+        FROM debts d
+        INNER JOIN bookings b ON b.id = d.booking_id
+        INNER JOIN customers c ON c.id = d.customer_id
+        WHERE d.remaining_amount > 0
+        ORDER BY overdueDays DESC, d.updated_at DESC
+      `;
+    }
 
-    const refunds = await prisma.$queryRaw<any[]>`
-      SELECT TOP 50
-        r.id,
-        r.refund_code AS refundCode,
-        b.booking_code AS bookingCode,
-        c.full_name AS customerName,
-        r.refund_amount AS refundAmount,
-        r.cancellation_fee_amount AS cancellationFeeAmount,
-        r.refund_status AS refundStatus,
-        r.refund_method AS refundMethod,
-        r.refund_at AS refundAt
-      FROM refunds r
-      INNER JOIN bookings b ON b.id = r.booking_id
-      INNER JOIN customers c ON c.id = b.customer_id
-      ORDER BY r.created_at DESC
-    `;
+    let refunds;
+    if (hasFilter) {
+      refunds = await prisma.$queryRawUnsafe<any[]>(`
+        SELECT TOP 50
+          r.id,
+          r.refund_code AS refundCode,
+          b.booking_code AS bookingCode,
+          c.full_name AS customerName,
+          r.refund_amount AS refundAmount,
+          r.cancellation_fee_amount AS cancellationFeeAmount,
+          r.refund_status AS refundStatus,
+          r.refund_method AS refundMethod,
+          r.refund_at AS refundAt
+        FROM refunds r
+        INNER JOIN bookings b ON b.id = r.booking_id
+        INNER JOIN customers c ON c.id = b.customer_id
+        WHERE ISNULL(r.refund_at, r.created_at) >= '${startStr} 00:00:00'
+          AND ISNULL(r.refund_at, r.created_at) < '${nextEndStr} 00:00:00'
+        ORDER BY r.created_at DESC
+      `);
+    } else {
+      refunds = await prisma.$queryRaw<any[]>`
+        SELECT TOP 50
+          r.id,
+          r.refund_code AS refundCode,
+          b.booking_code AS bookingCode,
+          c.full_name AS customerName,
+          r.refund_amount AS refundAmount,
+          r.cancellation_fee_amount AS cancellationFeeAmount,
+          r.refund_status AS refundStatus,
+          r.refund_method AS refundMethod,
+          r.refund_at AS refundAt
+        FROM refunds r
+        INNER JOIN bookings b ON b.id = r.booking_id
+        INNER JOIN customers c ON c.id = b.customer_id
+        ORDER BY r.created_at DESC
+      `;
+    }
 
     const bookingOptions = await prisma.$queryRaw<any[]>`
       SELECT TOP 100

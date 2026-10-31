@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, Suspense } from "react";
 import HomeHeader from "@/components/home/HomeHeader";
 import { HomeFooter } from "@/components/home/HomeSections";
 import { useSearchParams } from "next/navigation";
@@ -28,6 +28,21 @@ const themeChips = [
 ];
 
 export default function ThemeToursPage() {
+  return (
+    <Suspense fallback={
+      <main className="min-h-screen bg-[#f9f9fc] text-[#2f3337]">
+        <HomeHeader />
+        <div className="mx-auto max-w-7xl px-4 py-40 text-center text-xl font-bold text-[#00606c]">
+          Đang tải danh sách tour theo chủ đề...
+        </div>
+      </main>
+    }>
+      <ThemeToursContent />
+    </Suspense>
+  );
+}
+
+function ThemeToursContent() {
   const searchParams = useSearchParams();
   const tagId = searchParams.get("tagId") || "";
   const title = searchParams.get("title") || "Tour theo chủ đề";

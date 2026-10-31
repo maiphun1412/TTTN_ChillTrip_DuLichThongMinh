@@ -16,6 +16,7 @@ export default function HomeHeader() {
   const router = useRouter();
 
   const [unreadNotifications, setUnreadNotifications] = useState(0);
+  const [favoriteCount, setFavoriteCount] = useState(0);
   const [currentUser, setCurrentUser] = useState<HeaderUser | null>(null);
   const [searchKeyword, setSearchKeyword] = useState("");
 
@@ -29,22 +30,65 @@ export default function HomeHeader() {
         if (!token) {
           setCurrentUser(null);
           setUnreadNotifications(0);
+          setFavoriteCount(0);
           return;
         }
 
-        const userData = await getCurrentUserApi();
+        // Lấy thông tin user
+        try {
+          const userData = await getCurrentUserApi();
+          setCurrentUser({
+            fullName:
+              userData.customer?.fullName || userData.user.fullName || "Tài khoản",
+            avatarUrl: userData.user.avatarUrl || null,
+          });
+        } catch (e: any) {
+          if (e?.message === "Chưa đăng nhập" || e?.message?.includes("đăng nhập")) {
+            localStorage.removeItem("access_token");
+            sessionStorage.removeItem("access_token");
+            localStorage.removeItem("user");
+            sessionStorage.removeItem("user");
+          } else {
+            console.warn("Load user data error:", e);
+          }
+          setCurrentUser(null);
+        }
 
-        setCurrentUser({
-          fullName:
-            userData.customer?.fullName || userData.user.fullName || "Tài khoản",
-          avatarUrl: userData.user.avatarUrl || null,
-        });
+        // Lấy số lượng thông báo chưa đọc
+        try {
+          const notificationData = await getNotificationsApi();
+          setUnreadNotifications(notificationData.unreadCount || 0);
+        } catch (e) {
+          console.warn("Load notifications error:", e);
+          setUnreadNotifications(0);
+        }
 
-        const notificationData = await getNotificationsApi();
-        setUnreadNotifications(notificationData.unreadCount);
-      } catch {
+        // Lấy số lượng yêu thích
+        try {
+          const favRes = await fetch("/backend-api/favorites", {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          });
+          if (favRes.ok) {
+            const favJson = await favRes.json();
+            if (favJson && favJson.success && Array.isArray(favJson.data)) {
+              setFavoriteCount(favJson.data.length);
+            } else {
+              setFavoriteCount(0);
+            }
+          } else {
+            setFavoriteCount(0);
+          }
+        } catch (e) {
+          console.warn("Load favorites count error:", e);
+          setFavoriteCount(0);
+        }
+      } catch (err) {
+        console.warn("Load header data error:", err);
         setCurrentUser(null);
         setUnreadNotifications(0);
+        setFavoriteCount(0);
       }
     }
 
@@ -54,13 +98,19 @@ export default function HomeHeader() {
       loadHeaderData();
     }
 
+    function handleFavoritesChanged() {
+      loadHeaderData();
+    }
+
     window.addEventListener("notifications-changed", handleNotificationsChanged);
+    window.addEventListener("favorites-changed", handleFavoritesChanged);
 
     return () => {
       window.removeEventListener(
         "notifications-changed",
         handleNotificationsChanged
       );
+      window.removeEventListener("favorites-changed", handleFavoritesChanged);
     };
   }, []);
 
@@ -170,11 +220,9 @@ export default function HomeHeader() {
               />
             </svg>
 
-            {unreadNotifications > 0 ? (
-              <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-[#fc8a40] px-1 text-[10px] font-bold text-white">
-                {unreadNotifications > 9 ? "9+" : unreadNotifications}
-              </span>
-            ) : null}
+            <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-[#fc8a40] px-1 text-[10px] font-bold text-white">
+              {unreadNotifications > 9 ? "9+" : unreadNotifications}
+            </span>
           </Link>
 
           <span className="pointer-events-none absolute left-1/2 top-full z-50 mt-2 -translate-x-1/2 whitespace-nowrap rounded-md bg-black px-3 py-1 text-xs text-white opacity-0 shadow-md transition-all duration-200 group-hover:opacity-100">
@@ -202,8 +250,8 @@ export default function HomeHeader() {
               />
             </svg>
 
-            <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[10px] text-white">
-              2
+            <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">
+              {favoriteCount}
             </span>
           </Link>
 

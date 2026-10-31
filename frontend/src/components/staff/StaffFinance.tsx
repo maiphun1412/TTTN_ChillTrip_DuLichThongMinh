@@ -25,6 +25,12 @@ import {
   type StaffFinanceTransaction,
   type StaffPaymentRecordPayload,
 } from "@/lib/api/staff.api";
+import ExportTimeFilter, {
+  TimeFilterOptions,
+  formatReportTimeLabel,
+  formatReportFilenameSuffix,
+  filterItemsByTime,
+} from "@/components/shared/ExportTimeFilter";
 
 type PaymentForm = {
   bookingId: string;
@@ -567,7 +573,7 @@ export default function StaffFinance() {
     </div>
   );
 }
-function buildFinanceReportHtml(data: StaffFinanceData) {
+function buildFinanceReportHtml(data: StaffFinanceData, timeLabel?: string) {
   const rows = data.transactions
     .map(
       (item) => `
@@ -606,7 +612,7 @@ function buildFinanceReportHtml(data: StaffFinanceData) {
     <html lang="vi">
       <head>
         <meta charset="utf-8" />
-        <title>Báo cáo tài chính ChillTrip</title>
+        <title>Báo cáo tài chính ChillTrip ${timeLabel || ""}</title>
         <style>
           * {
             box-sizing: border-box;
@@ -702,7 +708,7 @@ function buildFinanceReportHtml(data: StaffFinanceData) {
       </head>
 
       <body>
-        <h1>Báo cáo tài chính ChillTrip</h1>
+        <h1>Báo cáo tài chính ChillTrip ${timeLabel || ""}</h1>
         <div class="muted">
           Ngày xuất: ${new Date().toLocaleDateString("vi-VN")} • Dữ liệu lấy từ hệ thống
         </div>
@@ -775,8 +781,8 @@ function buildFinanceReportHtml(data: StaffFinanceData) {
   `;
 }
 
-function exportFinancePdf(data: StaffFinanceData) {
-  const html = buildFinanceReportHtml(data);
+export function exportFinancePdf(data: StaffFinanceData, timeLabel?: string) {
+  const html = buildFinanceReportHtml(data, timeLabel);
   const win = window.open("", "_blank");
 
   if (!win) {
@@ -794,8 +800,8 @@ function exportFinancePdf(data: StaffFinanceData) {
   }, 500);
 }
 
-function exportFinanceExcel(data: StaffFinanceData) {
-  const html = buildFinanceReportHtml(data);
+export function exportFinanceExcel(data: StaffFinanceData, timeLabel?: string, fileSuffix?: string) {
+  const html = buildFinanceReportHtml(data, timeLabel);
 
   const blob = new Blob(["\uFEFF" + html], {
     type: "application/vnd.ms-excel;charset=utf-8;",
@@ -805,20 +811,137 @@ function exportFinanceExcel(data: StaffFinanceData) {
   const link = document.createElement("a");
 
   link.href = url;
-  link.download = `bao-cao-tai-chinh-chilltrip-${new Date()
-    .toISOString()
-    .slice(0, 10)}.xls`;
+  link.download = `bao-cao-tai-chinh-${fileSuffix || new Date().toISOString().slice(0, 10)}.xls`;
 
   link.click();
   URL.revokeObjectURL(url);
 }
 function FinanceExportPreviewModal({
-  data,
+  data: initialData,
   onClose,
 }: {
   data: StaffFinanceData;
   onClose: () => void;
 }) {
+  const [data, setData] = useState<StaffFinanceData>(initialData);
+  const [timeFilter, setTimeFilter] = useState<TimeFilterOptions>({
+    type: "month",
+    month: new Date().getMonth() + 1,
+    quarter: 1,
+    year: new Date().getFullYear(),
+  });
+
+  useEffect(() => {
+    let start: string | undefined;
+    let end: string | undefined;
+
+    if (timeFilter.type === "custom") {
+      if (timeFilter.customStartDate && timeFilter.customEndDate) {
+        start = timeFilter.customStartDate;
+        end = timeFilter.customEndDate;
+      } else {
+        return;
+      }
+    } else if (timeFilter.type === "month") {
+      start = `${timeFilter.year}-${String(timeFilter.month).padStart(2, "0")}-01`;
+      const lastDay = new Date(timeFilter.year, timeFilter.month, 0).getDate();
+      end = `${timeFilter.year}-${String(timeFilter.month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+    } else if (timeFilter.type === "quarter") {
+      const startMonth = (timeFilter.quarter - 1) * 3 + 1;
+      const endMonth = timeFilter.quarter * 3;
+      start = `${timeFilter.year}-${String(startMonth).padStart(2, "0")}-01`;
+      const lastDay = new Date(timeFilter.year, endMonth, 0).getDate();
+      end = `${timeFilter.year}-${String(endMonth).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+    }
+
+    async function reloadData() {
+      try {
+        const result = await getStaffFinanceApi({
+          startDate: start,
+          endDate: end,
+        });
+        setData(result);
+      } catch (e) {
+        console.warn("Reload preview data error:", e);
+      }
+    }
+
+    reloadData();
+  }, [timeFilter]);
+
+  // Lọc dữ liệu theo thời gian đã chọn và các trường ngày nghiệp vụ tương ứng
+  const filteredTransactions = useMemo(() => {
+    return filterItemsByTime(
+      data.transactions || [],
+      (item) => item.paidAt || item.createdAt,
+      timeFilter
+    );
+  }, [data.transactions, timeFilter]);
+
+  const filteredDebts = useMemo(() => {
+    return filterItemsByTime(
+      data.debts || [],
+      (item) => item.bookedAt,
+      timeFilter
+    );
+  }, [data.debts, timeFilter]);
+
+  const filteredRefunds = useMemo(() => {
+    return filterItemsByTime(
+      data.refunds || [],
+      (item) => item.refundAt || item.createdAt,
+      timeFilter
+    );
+  }, [data.refunds, timeFilter]);
+
+  // Tính toán lại summary card values
+  const filteredSummary = useMemo(() => {
+    const paidTrans = filteredTransactions.filter(
+      (t) => t.paymentStatus === "PAID"
+    );
+    const pendingTrans = filteredTransactions.filter(
+      (t) => t.paymentStatus === "PENDING"
+    );
+
+    const paidAmount = paidTrans.reduce(
+      (sum, t) => sum + Number(t.amount || 0),
+      0
+    );
+    const pendingPaymentAmount = pendingTrans.reduce(
+      (sum, t) => sum + Number(t.amount || 0),
+      0
+    );
+    const monthRevenue = paidAmount;
+    const unpaidDebtAmount = filteredDebts.reduce(
+      (sum, d) => sum + Number(d.remainingAmount || 0),
+      0
+    );
+    const refundAmount = filteredRefunds
+      .filter((r) => r.refundStatus !== "REJECTED")
+      .reduce((sum, r) => sum + Number(r.refundAmount || 0), 0);
+    const netRevenue = monthRevenue - refundAmount;
+
+    return {
+      monthRevenue,
+      pendingPaymentAmount,
+      paidAmount,
+      unpaidDebtAmount,
+      refundAmount,
+      netRevenue,
+    };
+  }, [filteredTransactions, filteredDebts, filteredRefunds]);
+
+  // Đóng gói dữ liệu đã lọc
+  const filteredData = useMemo(() => {
+    return {
+      ...data,
+      summary: filteredSummary,
+      transactions: filteredTransactions,
+      debts: filteredDebts,
+      refunds: filteredRefunds,
+    };
+  }, [data, filteredSummary, filteredTransactions, filteredDebts, filteredRefunds]);
+
   return (
     <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/40 p-6 backdrop-blur-sm">
       <div className="max-h-[92vh] w-full max-w-6xl overflow-hidden rounded-[2rem] bg-white shadow-2xl">
@@ -840,30 +963,34 @@ function FinanceExportPreviewModal({
         </div>
 
         <div className="max-h-[76vh] overflow-y-auto p-7">
+          <div className="mb-6 rounded-2xl bg-[#f6fafb] p-5 ring-1 ring-[#ebeeef]">
+            <ExportTimeFilter value={timeFilter} onChange={setTimeFilter} />
+          </div>
+
           <section className="grid gap-4 md:grid-cols-3">
             <PreviewCard
-              label="Doanh thu tháng"
-              value={formatMoney(data.summary.monthRevenue)}
+              label="Doanh thu trong kỳ"
+              value={formatMoney(filteredSummary.monthRevenue)}
             />
             <PreviewCard
               label="Thanh toán chờ xử lý"
-              value={formatMoney(data.summary.pendingPaymentAmount)}
+              value={formatMoney(filteredSummary.pendingPaymentAmount)}
             />
             <PreviewCard
               label="Doanh thu ròng"
-              value={formatMoney(data.summary.netRevenue)}
+              value={formatMoney(filteredSummary.netRevenue)}
             />
             <PreviewCard
-              label="Công nợ chưa thu"
-              value={formatMoney(data.summary.unpaidDebtAmount)}
+              label="Công nợ phát sinh trong kỳ"
+              value={formatMoney(filteredSummary.unpaidDebtAmount)}
             />
             <PreviewCard
               label="Hoàn tiền"
-              value={formatMoney(data.summary.refundAmount)}
+              value={formatMoney(filteredSummary.refundAmount)}
             />
             <PreviewCard
               label="Tổng đã thanh toán"
-              value={formatMoney(data.summary.paidAmount)}
+              value={formatMoney(filteredSummary.paidAmount)}
             />
           </section>
 
@@ -889,7 +1016,7 @@ function FinanceExportPreviewModal({
                 </thead>
 
                 <tbody className="divide-y divide-[#ebeeef]">
-                  {data.transactions.slice(0, 10).map((item) => (
+                  {filteredTransactions.slice(0, 10).map((item) => (
                     <tr key={item.id}>
                       <td className="px-4 py-3 text-xs font-bold text-[#00606c]">
                         {item.paymentCode}
@@ -908,13 +1035,13 @@ function FinanceExportPreviewModal({
                     </tr>
                   ))}
 
-                  {data.transactions.length === 0 && (
+                  {filteredTransactions.length === 0 && (
                     <tr>
                       <td
                         colSpan={6}
                         className="px-4 py-8 text-center text-sm font-semibold text-[#6e797b]"
                       >
-                        Không có giao dịch.
+                        Không có giao dịch trong khoảng thời gian này.
                       </td>
                     </tr>
                   )}
@@ -945,7 +1072,7 @@ function FinanceExportPreviewModal({
                 </thead>
 
                 <tbody className="divide-y divide-[#ebeeef]">
-                  {data.debts.slice(0, 10).map((item) => (
+                  {filteredDebts.slice(0, 10).map((item) => (
                     <tr key={item.id}>
                       <td className="px-4 py-3 text-xs font-bold text-[#00606c]">
                         {item.bookingCode}
@@ -966,13 +1093,13 @@ function FinanceExportPreviewModal({
                     </tr>
                   ))}
 
-                  {data.debts.length === 0 && (
+                  {filteredDebts.length === 0 && (
                     <tr>
                       <td
                         colSpan={6}
                         className="px-4 py-8 text-center text-sm font-semibold text-[#6e797b]"
                       >
-                        Không có công nợ.
+                        Không có công nợ phát sinh trong khoảng thời gian này.
                       </td>
                     </tr>
                   )}
@@ -992,8 +1119,24 @@ function FinanceExportPreviewModal({
 
             <button
               type="button"
-              onClick={() => exportFinanceExcel(data)}
-              className="flex items-center gap-2 rounded-full bg-[#9b4500] px-6 py-3 text-sm font-black text-white"
+              onClick={() => {
+                if (timeFilter.type === "custom") {
+                  if (!timeFilter.customStartDate || !timeFilter.customEndDate) {
+                    alert("Vui lòng chọn đầy đủ ngày bắt đầu và ngày kết thúc.");
+                    return;
+                  }
+                  if (timeFilter.customStartDate > timeFilter.customEndDate) {
+                    alert("Ngày bắt đầu không được lớn hơn ngày kết thúc.");
+                    return;
+                  }
+                }
+                exportFinanceExcel(
+                  filteredData,
+                  formatReportTimeLabel(timeFilter),
+                  formatReportFilenameSuffix(timeFilter)
+                );
+              }}
+              className="flex items-center gap-2 rounded-full bg-[#9b4500] px-6 py-3 text-sm font-black text-white cursor-pointer"
             >
               <Download size={17} />
               Xuất Excel
@@ -1001,8 +1144,23 @@ function FinanceExportPreviewModal({
 
             <button
               type="button"
-              onClick={() => exportFinancePdf(data)}
-              className="flex items-center gap-2 rounded-full bg-[#00606c] px-6 py-3 text-sm font-black text-white"
+              onClick={() => {
+                if (timeFilter.type === "custom") {
+                  if (!timeFilter.customStartDate || !timeFilter.customEndDate) {
+                    alert("Vui lòng chọn đầy đủ ngày bắt đầu và ngày kết thúc.");
+                    return;
+                  }
+                  if (timeFilter.customStartDate > timeFilter.customEndDate) {
+                    alert("Ngày bắt đầu không được lớn hơn ngày kết thúc.");
+                    return;
+                  }
+                }
+                exportFinancePdf(
+                  filteredData,
+                  formatReportTimeLabel(timeFilter)
+                );
+              }}
+              className="flex items-center gap-2 rounded-full bg-[#00606c] px-6 py-3 text-sm font-black text-white cursor-pointer"
             >
               <Download size={17} />
               Xuất PDF

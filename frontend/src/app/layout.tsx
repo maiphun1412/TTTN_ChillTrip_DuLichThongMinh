@@ -1,21 +1,14 @@
 import type { Metadata } from "next";
-import { Inter, Plus_Jakarta_Sans } from "next/font/google";
 import AIChatBox from "@/components/chat/AIChatBox";
 import "./globals.css";
 
-const inter = Inter({
-  subsets: ["latin", "vietnamese"],
-  weight: ["400", "500", "600", "700", "800"],
-  variable: "--font-inter",
-  display: "swap",
-});
+const inter = {
+  variable: "font-sans",
+};
 
-const plusJakartaSans = Plus_Jakarta_Sans({
-  subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700", "800"],
-  variable: "--font-plus-jakarta",
-  display: "swap",
-});
+const plusJakartaSans = {
+  variable: "font-sans",
+};
 
 export const metadata: Metadata = {
   title: "ChillTrip",

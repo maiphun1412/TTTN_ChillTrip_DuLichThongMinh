@@ -14,8 +14,15 @@ import {
   ShieldOff,
   Star,
   TrendingUp,
+  X,
   XCircle,
 } from "lucide-react";
+import ExportTimeFilter, {
+  TimeFilterOptions,
+  formatReportTimeLabel,
+  formatReportFilenameSuffix,
+  filterItemsByTime,
+} from "@/components/shared/ExportTimeFilter";
 
 const API_BASE_URL = "/backend-api";
 
@@ -127,9 +134,24 @@ export default function AdminReviews() {
   const [loading, setLoading] = useState(true);
   const [selectedReview, setSelectedReview] = useState<Review | null>(null);
 
-  const [exportOpen, setExportOpen] = useState(false);
+  const [showReportFilterModal, setShowReportFilterModal] = useState(false);
+  const [timeFilter, setTimeFilter] = useState<TimeFilterOptions>({
+    type: "month",
+    month: new Date().getMonth() + 1,
+    quarter: 1,
+    year: new Date().getFullYear(),
+  });
+
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewHtml, setPreviewHtml] = useState("");
+
+  const filteredReviewsForExport = useMemo(() => {
+    return filterItemsByTime(
+      reviews,
+      (item) => item.created_at,
+      timeFilter
+    );
+  }, [reviews, timeFilter]);
 
   async function loadData() {
     try {
@@ -250,8 +272,14 @@ export default function AdminReviews() {
     }
   }
 
-  function exportCsv() {
+  function exportCsv(dataToExport: Review[]) {
+    const timeLabel = formatReportTimeLabel(timeFilter);
+    const fileSuffix = formatReportFilenameSuffix(timeFilter);
+
     const rows = [
+      [`BÁO CÁO ĐÁNH GIÁ KHÁCH HÀNG - ${timeLabel.toUpperCase()}`],
+      [`Ngày lập`, new Date().toLocaleDateString("vi-VN")],
+      [],
       [
         "Khách hàng",
         "Email",
@@ -264,7 +292,7 @@ export default function AdminReviews() {
         "Trạng thái",
         "Ngày gửi",
       ],
-      ...reviews.map((item) => [
+      ...dataToExport.map((item) => [
         item.customers?.full_name || "",
         item.customers?.email || "",
         item.tours?.tour_name || "",
@@ -291,17 +319,17 @@ export default function AdminReviews() {
     const a = document.createElement("a");
 
     a.href = url;
-    a.download = `bao-cao-danh-gia-${Date.now()}.csv`;
+    a.download = `bao-cao-danh-gia-${fileSuffix}.csv`;
     a.click();
 
     URL.revokeObjectURL(url);
-    setExportOpen(false);
+    setShowReportFilterModal(false);
   }
 
-  function generateReportHtml() {
+  function generateReportHtml(dataToExport: Review[], timeLabel?: string) {
     const rowsHtml =
-      reviews.length > 0
-        ? reviews
+      dataToExport.length > 0
+        ? dataToExport
             .map(
               (item, index) => `
                 <tr>
@@ -326,12 +354,21 @@ export default function AdminReviews() {
           </tr>
         `;
 
+    // Recalculate stats for report
+    const total = dataToExport.length;
+    const pending = dataToExport.filter((item) => item.moderation_status === "PENDING").length;
+    const approved = dataToExport.filter((item) => item.moderation_status === "APPROVED").length;
+    const hidden = dataToExport.filter((item) => item.moderation_status === "HIDDEN").length;
+    const sum = dataToExport.reduce((s, item) => s + (item.rating || 0), 0);
+    const avg = total > 0 ? (sum / total).toFixed(1) : "0.0";
+    const publicRate = total > 0 ? Math.round((dataToExport.filter((item) => item.is_public).length / total) * 100) : 0;
+
     return `
       <!DOCTYPE html>
       <html lang="vi">
       <head>
         <meta charset="UTF-8" />
-        <title>Báo cáo đánh giá khách hàng</title>
+        <title>Báo cáo đánh giá khách hàng ${timeLabel || ""}</title>
         <style>
           * {
             box-sizing: border-box;
@@ -340,7 +377,7 @@ export default function AdminReviews() {
           body {
             margin: 0;
             padding: 36px;
-            font-family: "Times New Roman", Times, serif;
+            font-family: Arial, sans-serif;
             color: #111827;
             background: #ffffff;
             line-height: 1.45;
@@ -401,19 +438,19 @@ export default function AdminReviews() {
           table {
             width: 100%;
             border-collapse: collapse;
-            font-size: 12px;
+            font-size: 11px;
           }
 
           th,
           td {
-            border: 1px solid #111827;
+            border: 1px solid #dfe3e4;
             padding: 7px 8px;
             vertical-align: top;
           }
 
           th {
-            background: #e5e9ea;
-            color: #111827;
+            background: #f1f4f5;
+            color: #3e494b;
             text-align: center;
             font-weight: bold;
           }
@@ -442,7 +479,7 @@ export default function AdminReviews() {
 
           .summary p {
             margin: 4px 0;
-            font-size: 14px;
+            font-size: 13px;
           }
 
           .image-section {
@@ -473,7 +510,7 @@ export default function AdminReviews() {
 
           @media print {
             body {
-              padding: 20mm;
+              padding: 10mm;
             }
 
             .no-print {
@@ -491,27 +528,25 @@ export default function AdminReviews() {
         <div class="report-header">
           <div class="brand">ChillTrip Admin</div>
           <h1>Báo cáo đánh giá khách hàng</h1>
-          <p class="subtitle">Ngày lập báo cáo: ${new Date().toLocaleDateString(
-            "vi-VN"
-          )}</p>
+          <p class="subtitle">Báo cáo: ${timeLabel || ""} • Ngày lập: ${new Date().toLocaleDateString("vi-VN")}</p>
         </div>
 
         <div class="meta">
           <div class="meta-card">
             <span>Tổng đánh giá</span>
-            <strong>${stats.total}</strong>
+            <strong>${total}</strong>
           </div>
           <div class="meta-card">
             <span>Điểm trung bình</span>
-            <strong>${stats.avg}/5</strong>
+            <strong>${avg}/5</strong>
           </div>
           <div class="meta-card">
             <span>Chờ duyệt</span>
-            <strong>${stats.pending}</strong>
+            <strong>${pending}</strong>
           </div>
           <div class="meta-card">
             <span>Tỷ lệ công khai</span>
-            <strong>${stats.publicRate}%</strong>
+            <strong>${publicRate}%</strong>
           </div>
         </div>
 
@@ -538,13 +573,13 @@ export default function AdminReviews() {
 
         <div class="summary">
           <h2>Nhận xét tổng quan</h2>
-          <p>Báo cáo tổng hợp các đánh giá khách hàng theo bộ lọc hiện tại trên hệ thống.</p>
-          <p>Các đánh giá tích cực giúp ChillTrip cải thiện chất lượng dịch vụ, nâng cao trải nghiệm tour và chăm sóc khách hàng hiệu quả hơn.</p>
+          <p>Báo cáo tổng hợp các đánh giá khách hàng trong khoảng thời gian được chọn.</p>
+          <p>Các phản hồi từ du khách giúp nâng cao trải nghiệm tour của ChillTrip.</p>
         </div>
 
         <div class="image-section">
           <h2>Hình ảnh minh họa</h2>
-          <img class="report-image" src="${REPORT_IMAGE}" alt="Vịnh Hạ Long" />
+          <img class="report-image" src="${REPORT_IMAGE}" alt="Hạ Long" />
         </div>
 
         <div class="footer">
@@ -555,10 +590,11 @@ export default function AdminReviews() {
     `;
   }
 
-  function previewPdf() {
-    setPreviewHtml(generateReportHtml());
+  function previewPdf(dataToExport: Review[]) {
+    const timeLabel = formatReportTimeLabel(timeFilter);
+    setPreviewHtml(generateReportHtml(dataToExport, timeLabel));
     setPreviewOpen(true);
-    setExportOpen(false);
+    setShowReportFilterModal(false);
   }
 
   function printPdf() {
@@ -597,33 +633,12 @@ export default function AdminReviews() {
 
           <div className="relative">
             <button
-              onClick={() => setExportOpen((value) => !value)}
+              onClick={() => setShowReportFilterModal(true)}
               className="inline-flex items-center gap-2 rounded-full bg-[#00606c] px-6 py-3 font-black text-white shadow-lg shadow-[#00606c]/20 transition hover:scale-105"
             >
               <Download size={18} />
               Xuất báo cáo
-              <ChevronDown size={16} />
             </button>
-
-            {exportOpen && (
-              <div className="absolute right-0 z-40 mt-3 w-52 overflow-hidden rounded-2xl border border-[#bdc8cb]/20 bg-white p-2 shadow-2xl">
-                <button
-                  onClick={previewPdf}
-                  className="flex w-full items-center gap-2 rounded-xl px-4 py-3 text-left text-sm font-black text-[#00606c] transition hover:bg-[#f1f4f5]"
-                >
-                  <Eye size={17} />
-                  Xem trước PDF
-                </button>
-
-                <button
-                  onClick={exportCsv}
-                  className="flex w-full items-center gap-2 rounded-xl px-4 py-3 text-left text-sm font-black text-[#9b4500] transition hover:bg-[#f1f4f5]"
-                >
-                  <Download size={17} />
-                  Xuất CSV
-                </button>
-              </div>
-            )}
           </div>
         </div>
       </section>
@@ -931,6 +946,52 @@ export default function AdminReviews() {
               srcDoc={previewHtml}
               className="h-full w-full flex-1 bg-white"
             />
+          </div>
+        </div>
+      )}
+      {showReportFilterModal && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm animate-fade-in">
+          <div className="w-full max-w-md overflow-hidden rounded-[2rem] bg-white p-6 shadow-2xl">
+            <div className="mb-6 flex items-center justify-between border-b border-[#ebeeef] pb-4">
+              <h3 className="text-lg font-black text-[#00606c]">Xuất báo cáo đánh giá</h3>
+              <button
+                type="button"
+                onClick={() => setShowReportFilterModal(false)}
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-[#f1f4f5] text-[#3e494b]"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="my-6">
+              <ExportTimeFilter value={timeFilter} onChange={setTimeFilter} />
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowReportFilterModal(false)}
+                className="flex-1 rounded-full border border-[#bdc8cb] py-3 text-sm font-black text-[#3e494b]"
+              >
+                Đóng
+              </button>
+              <button
+                type="button"
+                onClick={() => exportCsv(filteredReviewsForExport)}
+                className="flex-1 flex items-center justify-center gap-1.5 rounded-full bg-[#9b4500] py-3 text-sm font-black text-white"
+              >
+                <Download size={14} />
+                Xuất CSV
+              </button>
+              <button
+                type="button"
+                onClick={() => previewPdf(filteredReviewsForExport)}
+                className="flex-1 flex items-center justify-center gap-1.5 rounded-full bg-[#00606c] py-3 text-sm font-black text-white"
+              >
+                <Eye size={14} />
+                Xem PDF
+              </button>
+            </div>
           </div>
         </div>
       )}

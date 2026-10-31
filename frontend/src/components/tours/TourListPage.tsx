@@ -67,12 +67,14 @@ export default function TourListPage() {
   const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
   const [mainTours, setMainTours] = useState<ApiTour[]>([]);
   const [loading, setLoading] = useState(true);
-const router = useRouter();
+  const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
 
-const searchParams = useSearchParams();
+  const searchParams = useSearchParams();
 
-const keyword = searchParams.get("keyword")?.trim().toLowerCase() || "";
-const departureDate = searchParams.get("departureDate") || "";
+  const destination = searchParams.get("destination")?.trim() || "";
+  const keyword = searchParams.get("keyword")?.trim().toLowerCase() || "";
+  const departureDate = searchParams.get("departureDate") || "";
 
 const [promotions, setPromotions] = useState<ApiPromotion[]>([]);
 const [promotionLoading, setPromotionLoading] = useState(true);
@@ -116,11 +118,29 @@ async function toggleFavorite(tourId: string) {
 
     setFavoriteIds((prev) => [...prev, String(tourId)]);
   }
+  window.dispatchEvent(new Event("favorites-changed"));
 }
   useEffect(() => {
     async function loadTours() {
       try {
-        const res = await fetch("/backend-api/tours");
+        setLoading(true);
+        setError(null);
+
+        const params = new URLSearchParams();
+        if (destination) {
+          params.set("destination", destination);
+        }
+        if (keyword) {
+          params.set("keyword", keyword);
+        }
+        if (departureDate) {
+          params.set("departureDate", departureDate);
+        }
+
+        const queryString = params.toString();
+        const res = await fetch(
+          queryString ? `/backend-api/tours?${queryString}` : "/backend-api/tours"
+        );
 
         if (!res.ok) {
           throw new Error("Không thể lấy danh sách tour");
@@ -128,8 +148,9 @@ async function toggleFavorite(tourId: string) {
 
         const json = await res.json();
         setMainTours(Array.isArray(json.data) ? json.data : []);
-      } catch (error) {
-        console.error("Load tours error:", error);
+      } catch (err) {
+        console.error("Load tours error:", err);
+        setError("Đã xảy ra lỗi khi tải danh sách tour. Vui lòng thử lại sau.");
         setMainTours([]);
       } finally {
         setLoading(false);
@@ -137,7 +158,7 @@ async function toggleFavorite(tourId: string) {
     }
 
     loadTours();
-  }, []);
+  }, [destination, keyword, departureDate]);
 useEffect(() => {
   async function loadPromotions() {
     try {
@@ -282,25 +303,31 @@ if (keyword && !searchText.includes(keyword)) return false;
           <h1 className="mb-6 text-4xl font-extrabold tracking-tight text-[#00606c] md:text-5xl">
             Danh sách Tour
           </h1>
-          {(keyword || departureDate) && (
-  <div className="mb-6 rounded-2xl border border-[#d6e0e3] bg-white px-5 py-4 text-sm font-semibold text-[#3e494b]">
-    Đang tìm kiếm
-    {keyword ? (
-      <>
-        {" "}theo từ khóa:{" "}
-        <span className="font-extrabold text-[#00606c]">{keyword}</span>
-      </>
-    ) : null}
-    {departureDate ? (
-      <>
-        {" "}ngày đi:{" "}
-        <span className="font-extrabold text-[#00606c]">
-          {new Date(departureDate).toLocaleDateString("vi-VN")}
-        </span>
-      </>
-    ) : null}
-  </div>
-)}
+          {(destination || keyword || departureDate) && (
+            <div className="mb-6 rounded-2xl border border-[#d6e0e3] bg-white px-5 py-4 text-sm font-semibold text-[#3e494b]">
+              Đang tìm kiếm
+              {destination ? (
+                <>
+                  {" "}điểm đến:{" "}
+                  <span className="font-extrabold text-[#00606c]">{destination}</span>
+                </>
+              ) : null}
+              {keyword ? (
+                <>
+                  {" "}theo từ khóa:{" "}
+                  <span className="font-extrabold text-[#00606c]">{keyword}</span>
+                </>
+              ) : null}
+              {departureDate ? (
+                <>
+                  {" "}ngày đi:{" "}
+                  <span className="font-extrabold text-[#00606c]">
+                    {new Date(departureDate).toLocaleDateString("vi-VN")}
+                  </span>
+                </>
+              ) : null}
+            </div>
+          )}
 
           <div className="flex flex-col gap-4">
             <div className="flex items-center gap-3">
@@ -624,6 +651,10 @@ if (keyword && !searchText.includes(keyword)) return false;
               {loading ? (
                 <div className="col-span-full rounded-[24px] bg-white p-10 text-center font-bold text-[#00606c]">
                   Đang tải danh sách tour...
+                </div>
+              ) : error ? (
+                <div className="col-span-full rounded-[24px] bg-white border border-red-200 p-10 text-center font-bold text-red-600">
+                  {error}
                 </div>
               ) : filteredTours.length === 0 ? (
                 <div className="col-span-full rounded-[24px] bg-white p-10 text-center font-bold text-[#00606c]">

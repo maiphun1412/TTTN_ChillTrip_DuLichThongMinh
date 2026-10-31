@@ -344,6 +344,7 @@ export type StaffCustomerItem = {
   totalBookings: number;
   totalSpent: number;
   lastBookedAt: string | null;
+  createdAt?: string | null;
 };
 
 export type StaffCustomersData = {
@@ -501,6 +502,7 @@ export type StaffFinanceDebt = {
   debtStatus: string;
   overdueDays: number;
   notes: string | null;
+  bookedAt?: string | null;
 };
 
 export type StaffFinanceBookingOption = {
@@ -522,6 +524,7 @@ export type StaffFinanceRefund = {
   refundStatus: string;
   refundMethod: string | null;
   refundAt: string | null;
+  createdAt?: string | null;
 };
 
 export type StaffFinanceTrendItem = {
@@ -558,11 +561,15 @@ export type StaffPaymentRecordPayload = {
 export function getStaffFinanceApi(params?: {
   keyword?: string;
   status?: string;
+  startDate?: string;
+  endDate?: string;
 }) {
   const query = new URLSearchParams();
 
   if (params?.keyword) query.set("keyword", params.keyword);
   if (params?.status) query.set("status", params.status);
+  if (params?.startDate) query.set("startDate", params.startDate);
+  if (params?.endDate) query.set("endDate", params.endDate);
 
   const queryString = query.toString();
 

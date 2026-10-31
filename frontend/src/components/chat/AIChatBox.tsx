@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import {
   getOrCreateChatSessionId,
   listenChatMessages,
@@ -15,14 +16,121 @@ const quickSuggestions = [
 ];
 
 export default function AIChatBox() {
+  const pathname = usePathname();
+  const router = useRouter();
+  const [showChat, setShowChat] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
   const [sessionId, setSessionId] = useState("");
   const [messages, setMessages] = useState<FirebaseChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
 
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const messageContainerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    async function loadFavorites() {
+      const token = localStorage.getItem("access_token") || sessionStorage.getItem("access_token");
+      if (!token) return;
+      try {
+        const res = await fetch("/backend-api/favorites", {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        const json = await res.json();
+        if (json.success) {
+          setFavoriteIds(json.data.map((item: any) => String(item.tourId)));
+        }
+      } catch (e) {
+        console.error("Load favorites count error:", e);
+      }
+    }
+    if (isOpen) {
+      loadFavorites();
+    }
+  }, [isOpen]);
+
+  async function handleToggleFavorite(tourId: string) {
+    const token = localStorage.getItem("access_token") || sessionStorage.getItem("access_token");
+
+    if (!token) {
+      alert("Vui lòng đăng nhập để lưu tour yêu thích.");
+      router.push("/login");
+      return;
+    }
+
+    const isFavorite = favoriteIds.includes(String(tourId));
+
+    try {
+      if (isFavorite) {
+        const res = await fetch(`/backend-api/favorites/${tourId}`, {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        if (res.ok) {
+          setFavoriteIds((prev) => prev.filter((id) => id !== String(tourId)));
+          window.dispatchEvent(new Event("favorites-changed"));
+        }
+      } else {
+        const res = await fetch("/backend-api/favorites", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ tourId }),
+        });
+        if (res.ok) {
+          setFavoriteIds((prev) => [...prev, String(tourId)]);
+          window.dispatchEvent(new Event("favorites-changed"));
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  useEffect(() => {
+    // 1. Kiểm tra xem pathname hiện tại có thuộc các trang quản trị/nhân viên/hướng dẫn viên không
+    const isAdminStaffGuidePath =
+      pathname.startsWith("/admin") ||
+      pathname.startsWith("/staff") ||
+      pathname.startsWith("/guide");
+
+    // Tạm ẩn ở trang đăng nhập, đăng ký
+    const isAuthPath = pathname === "/login" || pathname === "/register";
+
+    if (isAdminStaffGuidePath || isAuthPath) {
+      setShowChat(false);
+      return;
+    }
+
+    // 2. Kiểm tra role của user đăng nhập từ localStorage/sessionStorage
+    const userJson =
+      typeof window !== "undefined"
+        ? localStorage.getItem("user") || sessionStorage.getItem("user")
+        : null;
+
+    if (userJson) {
+      try {
+        const user = JSON.parse(userJson);
+        // Nếu user có role khác CUSTOMER (như ADMIN, STAFF, GUIDE) thì ẩn chat
+        if (user && user.role && user.role !== "CUSTOMER") {
+          setShowChat(false);
+          return;
+        }
+      } catch (e) {
+        console.error("Error parsing user role:", e);
+      }
+    }
+
+    setShowChat(true);
+  }, [pathname]);
 
   useEffect(() => {
     const id = getOrCreateChatSessionId();
@@ -33,7 +141,9 @@ export default function AIChatBox() {
   }, []);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (messageContainerRef.current) {
+      messageContainerRef.current.scrollTop = messageContainerRef.current.scrollHeight;
+    }
   }, [messages, isSending]);
 
   async function handleSend(customText?: string) {
@@ -56,6 +166,14 @@ export default function AIChatBox() {
         throw new Error("Thiếu NEXT_PUBLIC_API_BASE_URL trong .env.local");
       }
 
+      // ✅ Chỉ gửi tối đa 10 tin nhắn gần nhất để giữ ngữ cảnh hội thoại
+      const chatHistory = messages
+        .slice(-10)
+        .map((m) => ({
+          role: m.role,
+          message: m.message,
+        }));
+
       const response = await fetch(`${apiBaseUrl}/api/chat`, {
         method: "POST",
         headers: {
@@ -64,6 +182,7 @@ export default function AIChatBox() {
         body: JSON.stringify({
           sessionId,
           message: text,
+          history: chatHistory,
         }),
       });
 
@@ -76,6 +195,7 @@ export default function AIChatBox() {
       await saveChatMessage(sessionId, {
         role: "assistant",
         message: data.reply || "Mình chưa có câu trả lời phù hợp.",
+        tours: data.tours || null,
       });
     } catch (error) {
       console.error("Chat error:", error);
@@ -88,6 +208,8 @@ export default function AIChatBox() {
       setIsSending(false);
     }
   }
+
+  if (!showChat) return null;
 
   if (!isOpen) {
     return (
@@ -145,7 +267,7 @@ export default function AIChatBox() {
             : "h-[560px] w-[390px] max-h-[calc(100vh-32px)] max-w-[calc(100vw-32px)]",
         ].join(" ")}
       >
-        <div className="relative grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-[34px]">
+        <div className="relative flex flex-col h-full min-h-0 overflow-hidden rounded-[34px]">
           <div className="absolute inset-0 bg-[#f6fafb]" />
           <div className="absolute -left-28 -top-28 h-72 w-72 rounded-full bg-[#9defff]/35 blur-3xl" />
           <div className="absolute -right-24 top-20 h-80 w-80 rounded-full bg-[#007b8a]/20 blur-3xl" />
@@ -202,39 +324,73 @@ export default function AIChatBox() {
             </div>
           </div>
 
-          <div className="relative min-h-0 overflow-y-auto px-4 py-4 text-sm">
-            {messages.length === 0 && (
-              <div className="space-y-3">
-                <div className="mr-auto max-w-[88%] rounded-[24px] rounded-tl-md border border-white bg-white/90 px-4 py-3 leading-6 text-[#284247] shadow-[0_10px_28px_rgba(0,96,108,0.08)]">
-                  Xin chào, mình là trợ lý ChillTrip. Bạn muốn đi đâu hôm nay?
-                </div>
+          <div
+            ref={messageContainerRef}
+            className="relative flex-1 min-h-0 overflow-y-auto px-4 py-4 text-sm"
+          >
+            {/* ✅ Luôn hiển thị câu chào đầu tiên khi mở Chatbox */}
+            <div className="mr-auto max-w-[88%] rounded-[24px] rounded-tl-md border border-white bg-white/90 px-4 py-3 leading-6 text-[#284247] shadow-[0_10px_28px_rgba(0,96,108,0.08)] mb-3">
+              Xin chào, mình là trợ lý ChillTrip. Bạn muốn đi đâu hôm nay?
+            </div>
 
-                <div className="flex flex-wrap gap-2">
-                  {quickSuggestions.map((item) => (
-                    <button
-                      key={item}
-                      type="button"
-                      onClick={() => handleSend(item)}
-                      className="rounded-full border border-[#cfe5e8] bg-white/80 px-3 py-2 text-xs font-bold text-[#00606c] shadow-sm transition hover:-translate-y-0.5 hover:border-[#007b8a] hover:bg-white"
-                    >
-                      {item}
-                    </button>
-                  ))}
-                </div>
+            {/* ✅ Chỉ hiển thị gợi ý nhanh khi chưa có cuộc trò chuyện nào */}
+            {messages.length === 0 && (
+              <div className="flex flex-wrap gap-2 mb-3">
+                {quickSuggestions.map((item) => (
+                  <button
+                    key={item}
+                    type="button"
+                    onClick={() => handleSend(item)}
+                    className="rounded-full border border-[#cfe5e8] bg-white/80 px-3 py-2 text-xs font-bold text-[#00606c] shadow-sm transition hover:-translate-y-0.5 hover:border-[#007b8a] hover:bg-white cursor-pointer"
+                  >
+                    {item}
+                  </button>
+                ))}
               </div>
             )}
 
             <div className="space-y-3">
               {messages.map((msg) => (
-                <div
-                  key={msg.id}
-                  className={
-                    msg.role === "user"
-                      ? "ml-auto max-w-[82%] rounded-[24px] rounded-tr-md bg-[linear-gradient(135deg,#00606c_0%,#007b8a_100%)] px-4 py-3 leading-6 text-white shadow-[0_12px_28px_rgba(0,96,108,0.22)]"
-                      : "mr-auto max-w-[88%] rounded-[24px] rounded-tl-md border border-white bg-white/90 px-4 py-3 leading-6 text-[#26383d] shadow-[0_10px_28px_rgba(0,96,108,0.08)]"
-                  }
-                >
-                  {msg.message}
+                <div key={msg.id} className="space-y-2">
+                  <div
+                    className={
+                      msg.role === "user"
+                        ? "ml-auto max-w-[82%] rounded-[24px] rounded-tr-md bg-[linear-gradient(135deg,#00606c_0%,#007b8a_100%)] px-4 py-3 leading-6 text-white shadow-[0_12px_28px_rgba(0,96,108,0.22)]"
+                        : "mr-auto max-w-[88%] rounded-[24px] rounded-tl-md border border-white bg-white/90 px-4 py-3 leading-6 text-[#26383d] shadow-[0_10px_28px_rgba(0,96,108,0.08)]"
+                    }
+                  >
+                    {msg.message}
+                  </div>
+
+                  {/* ✅ HIỂN THỊ DANH SÁCH CARD TOUR NẾU CÓ */}
+                  {msg.tours && msg.tours.length > 0 && (
+                    <div className="no-scrollbar flex gap-4 overflow-x-auto py-2 max-w-full">
+                      {msg.tours.map((tour) => (
+                        <TourCardInChat
+                          key={tour.id}
+                          tour={tour}
+                          favoriteIds={favoriteIds}
+                          onToggleFavorite={handleToggleFavorite}
+                        />
+                      ))}
+                    </div>
+                  )}
+
+                  {/* ✅ GỢI Ý LIÊN HỆ TƯ VẤN KHI LỖI HOẶC AI KHÔNG XỬ LÝ ĐƯỢC */}
+                  {msg.role === "assistant" && (
+                    msg.message.includes("chưa xử lý được") ||
+                    msg.message.includes("chưa có câu trả lời")
+                  ) && (
+                    <div className="mr-auto mt-1">
+                      <button
+                        type="button"
+                        onClick={() => router.push("/consult")}
+                        className="rounded-full bg-[#e5f7fa] border border-[#00606c]/20 px-4 py-2 text-xs font-bold text-[#00606c] hover:bg-[#00606c] hover:text-white transition-all shadow-sm cursor-pointer"
+                      >
+                        📞 Liên hệ nhân viên tư vấn
+                      </button>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -346,5 +502,91 @@ function MinimizeIcon() {
         d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"
       />
     </svg>
+  );
+}
+
+function TourCardInChat({
+  tour,
+  favoriteIds,
+  onToggleFavorite,
+}: {
+  tour: {
+    id: string;
+    tourName: string;
+    basePrice: number | string;
+    imageUrl: string;
+    startDate: string;
+    availableSeats: number;
+  };
+  favoriteIds: string[];
+  onToggleFavorite: (tourId: string) => void;
+}) {
+  const router = useRouter();
+  const isFavorite = favoriteIds.includes(String(tour.id));
+
+  return (
+    <div className="w-56 shrink-0 overflow-hidden rounded-3xl border border-[#e3e7e8] bg-white shadow-sm transition hover:shadow-md">
+      <div className="relative h-28 w-full bg-slate-100">
+        <img
+          src={tour.imageUrl || "/images/tours/dalat-cover.jpg"}
+          alt={tour.tourName}
+          className="h-full w-full object-cover"
+        />
+      </div>
+
+      <div className="p-3">
+        <h4 className="line-clamp-1 text-sm font-extrabold text-[#00606c]" title={tour.tourName}>
+          {tour.tourName}
+        </h4>
+        <p className="mt-1 text-xs font-bold text-[#9b4500]">
+          {Number(tour.basePrice || 0).toLocaleString("vi-VN")}đ
+        </p>
+        
+        <div className="mt-2 space-y-1 text-[10px] text-slate-500 font-semibold">
+          <p>📅 Ngày đi: {tour.startDate ? new Date(tour.startDate).toLocaleDateString("vi-VN") : "Đang cập nhật"}</p>
+          <p>👥 Còn trống: {tour.availableSeats} chỗ</p>
+        </div>
+
+        <div className="mt-3 grid grid-cols-2 gap-1.5">
+          <button
+            type="button"
+            onClick={() => router.push(`/tours/${tour.id}`)}
+            className="rounded-full bg-[#f1f4f5] py-1.5 text-[10px] font-bold text-[#3e494b] hover:bg-[#dfe3e4] transition text-center cursor-pointer"
+          >
+            Chi tiết
+          </button>
+          
+          <button
+            type="button"
+            onClick={() => router.push(`/booking?tourId=${tour.id}`)}
+            className="rounded-full bg-[#00606c] py-1.5 text-[10px] font-bold text-white hover:bg-[#007b8a] transition text-center cursor-pointer"
+          >
+            Đặt tour
+          </button>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => onToggleFavorite(tour.id)}
+          className={`mt-2 flex w-full items-center justify-center gap-1 rounded-full border py-1.5 text-[10px] font-bold transition cursor-pointer ${
+            isFavorite
+              ? "border-red-200 bg-red-50 text-red-600 hover:bg-red-100"
+              : "border-[#e3e7e8] bg-white text-[#6e797b] hover:bg-[#f1f4f5]"
+          }`}
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            fill={isFavorite ? "currentColor" : "none"}
+            stroke="currentColor"
+            strokeWidth="2"
+            className="h-3 w-3 text-red-500"
+          >
+            <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 1 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78Z" />
+          </svg>
+          {isFavorite ? "Đã thích" : "Yêu thích"}
+        </button>
+      </div>
+    </div>
   );
 }

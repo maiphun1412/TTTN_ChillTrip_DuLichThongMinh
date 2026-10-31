@@ -171,7 +171,7 @@ export async function GET(request: NextRequest) {
     const tourRows = await prisma.$queryRaw<OptionRow[]>`
       SELECT id, tour_name AS label
       FROM tours
-      WHERE status IN ('ACTIVE', 'DRAFT', 'INACTIVE')
+      WHERE status IN ('DRAFT', 'PUBLISHED', 'STOPPED')
       ORDER BY tour_name ASC
     `;
 

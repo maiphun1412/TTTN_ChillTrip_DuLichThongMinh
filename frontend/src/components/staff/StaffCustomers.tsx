@@ -28,6 +28,12 @@ import {
   Wallet,
   X,
 } from "lucide-react";
+import ExportTimeFilter, {
+  TimeFilterOptions,
+  formatReportTimeLabel,
+  formatReportFilenameSuffix,
+  filterItemsByTime,
+} from "@/components/shared/ExportTimeFilter";
 import {
   getStaffCustomerDetailApi,
   getStaffCustomersApi,
@@ -129,6 +135,14 @@ export default function StaffCustomers() {
     individualCustomers: 0,
     corporateCustomers: 0,
     customersWithBookings: 0,
+  });
+
+  const [showReportFilterModal, setShowReportFilterModal] = useState(false);
+  const [timeFilter, setTimeFilter] = useState<TimeFilterOptions>({
+    type: "month",
+    month: new Date().getMonth() + 1,
+    quarter: 1,
+    year: new Date().getFullYear(),
   });
 
   const [keyword, setKeyword] = useState("");
@@ -394,9 +408,20 @@ export default function StaffCustomers() {
       "Tổng chi tiêu",
       "Tổng booking",
       "Trạng thái",
+      "Ngày tạo",
     ];
 
-    const rows = filteredCustomers.map((item) => [
+    const timeLabel = formatReportTimeLabel(timeFilter);
+    const fileSuffix = formatReportFilenameSuffix(timeFilter);
+
+    // Lọc theo ngày tạo khách hàng (createdAt)
+    const exportData = filterItemsByTime(
+      filteredCustomers,
+      (item) => item.createdAt,
+      timeFilter
+    );
+
+    const rows = exportData.map((item) => [
       item.customerCode,
       item.fullName,
       item.email || "",
@@ -406,9 +431,18 @@ export default function StaffCustomers() {
       item.totalSpent,
       item.totalBookings,
       getCustomerStatus(item),
+      item.createdAt
+        ? new Date(item.createdAt).toLocaleDateString("vi-VN")
+        : "Chưa rõ",
     ]);
 
-    const csv = [headers, ...rows]
+    const csvHeader = [
+      [`BÁO CÁO KHÁCH HÀNG - ${timeLabel.toUpperCase()}`],
+      [`Ngày lập`, new Date().toLocaleDateString("vi-VN")],
+      [],
+    ];
+
+    const csv = [...csvHeader, headers, ...rows]
       .map((row) =>
         row
           .map((cell) => `"${String(cell).replaceAll('"', '""')}"`)
@@ -423,11 +457,10 @@ export default function StaffCustomers() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `chilltrip-khach-hang-${new Date()
-      .toISOString()
-      .slice(0, 10)}.csv`;
+    link.download = `chilltrip-khach-hang-${fileSuffix}.csv`;
     link.click();
     URL.revokeObjectURL(url);
+    setShowReportFilterModal(false);
   }
 
   function resetFilters() {
@@ -562,7 +595,7 @@ export default function StaffCustomers() {
 
             <button
               type="button"
-              onClick={exportCustomersCsv}
+              onClick={() => setShowReportFilterModal(true)}
               className="flex items-center gap-2 text-sm font-bold text-[#00606c]"
             >
               <Download size={17} />
@@ -925,6 +958,44 @@ export default function StaffCustomers() {
           onSubmit={handleSave}
           updateForm={updateForm}
         />
+      )}
+      {showReportFilterModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm animate-fade-in">
+          <div className="w-full max-w-md overflow-hidden rounded-[2rem] bg-white p-6 shadow-2xl">
+            <div className="mb-6 flex items-center justify-between border-b border-[#ebeeef] pb-4">
+              <h3 className="text-lg font-black text-[#00606c]">Xuất báo cáo khách hàng</h3>
+              <button
+                type="button"
+                onClick={() => setShowReportFilterModal(false)}
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-[#f1f4f5] text-[#3e494b]"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="my-6">
+              <ExportTimeFilter value={timeFilter} onChange={setTimeFilter} />
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowReportFilterModal(false)}
+                className="flex-1 rounded-full border border-[#bdc8cb] py-3 text-sm font-black text-[#3e494b]"
+              >
+                Đóng
+              </button>
+              <button
+                type="button"
+                onClick={exportCustomersCsv}
+                className="flex-1 flex items-center justify-center gap-1.5 rounded-full bg-[#00606c] py-3 text-sm font-black text-white"
+              >
+                <Download size={15} />
+                Xác nhận & Xuất CSV
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

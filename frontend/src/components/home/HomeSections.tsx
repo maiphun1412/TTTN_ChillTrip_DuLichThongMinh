@@ -73,13 +73,36 @@ export function HeroSection() {
   const [destination, setDestination] = useState("");
   const [departureDate, setDepartureDate] = useState("");
 
+  const [today] = useState(() => {
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  });
+
   function handleSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    if (!destination.trim() && !departureDate) {
+      alert("Vui lòng nhập điểm đến hoặc chọn ngày đi để tìm kiếm tour.");
+      return;
+    }
+
+    if (departureDate) {
+      const selected = new Date(departureDate);
+      const currentDate = new Date();
+      currentDate.setHours(0, 0, 0, 0);
+      if (selected < currentDate) {
+        alert("Ngày đi không được trong quá khứ.");
+        return;
+      }
+    }
 
     const params = new URLSearchParams();
 
     if (destination.trim()) {
-      params.set("keyword", destination.trim());
+      params.set("destination", destination.trim());
     }
 
     if (departureDate) {
@@ -165,6 +188,7 @@ export function HeroSection() {
               <input
                 type="date"
                 value={departureDate}
+                min={today}
                 onChange={(event) => setDepartureDate(event.target.value)}
                 className="w-full bg-transparent text-sm font-semibold text-[#1f2a2d] outline-none"
               />

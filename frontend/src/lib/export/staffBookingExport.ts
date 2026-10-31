@@ -37,7 +37,7 @@ function getReportDate() {
    XUẤT EXCEL
 ========================= */
 
-export async function exportStaffBookingsToExcel(bookings: StaffBookingItem[]) {
+export async function exportStaffBookingsToExcel(bookings: StaffBookingItem[], timeLabel?: string, fileSuffix?: string) {
   const ExcelJS = await import("exceljs");
   const { saveAs } = await import("file-saver");
 
@@ -54,7 +54,7 @@ export async function exportStaffBookingsToExcel(bookings: StaffBookingItem[]) {
 
   worksheet.mergeCells("A1:L1");
   const titleCell = worksheet.getCell("A1");
-  titleCell.value = "BÁO CÁO DANH SÁCH ĐẶT CHỖ";
+  titleCell.value = `BÁO CÁO DANH SÁCH ĐẶT CHỖ ${timeLabel ? timeLabel.toUpperCase() : ""}`;
   titleCell.font = {
     name: "Times New Roman",
     size: 16,
@@ -186,7 +186,7 @@ export async function exportStaffBookingsToExcel(bookings: StaffBookingItem[]) {
     type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   });
 
-  saveAs(blob, `bao-cao-dat-cho-${Date.now()}.xlsx`);
+  saveAs(blob, `bao-cao-dat-cho-${fileSuffix || Date.now()}.xlsx`);
 }
 
 /* =========================
@@ -194,7 +194,7 @@ export async function exportStaffBookingsToExcel(bookings: StaffBookingItem[]) {
    Dùng trình in của browser để giữ Times New Roman + tiếng Việt có dấu
 ========================= */
 
-export function exportStaffBookingsToPdf(bookings: StaffBookingItem[]) {
+export function exportStaffBookingsToPdf(bookings: StaffBookingItem[], timeLabel?: string, fileSuffix?: string) {
   const rowsHtml = bookings
     .map(
       (booking, index) => `
@@ -220,7 +220,7 @@ export function exportStaffBookingsToPdf(bookings: StaffBookingItem[]) {
     <html lang="vi">
       <head>
         <meta charset="UTF-8" />
-        <title>Báo cáo đặt chỗ</title>
+        <title>Báo cáo đặt chỗ ${timeLabel || ""}</title>
         <style>
           @page {
             size: A4 landscape;
@@ -304,7 +304,7 @@ export function exportStaffBookingsToPdf(bookings: StaffBookingItem[]) {
 
       <body>
         <div class="report-header">
-          <h1>Báo cáo danh sách đặt chỗ</h1>
+          <h1>Báo cáo danh sách đặt chỗ ${timeLabel || ""}</h1>
           <p>Ngày xuất báo cáo: ${getReportDate()}</p>
         </div>
 

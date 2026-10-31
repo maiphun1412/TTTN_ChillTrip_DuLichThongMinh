@@ -1,9 +1,22 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import HomeHeader from "../home/HomeHeader";
 import { QRCodeCanvas } from "qrcode.react";
+import { useSeatAvailability } from "@/hooks/useSeatAvailability";
+import SeatWarningModal from "@/components/shared/SeatWarningModal";
+
+export function isPastDeparture(startDateStr: string | null | undefined): boolean {
+  if (!startDateStr) return true;
+  const startDate = new Date(startDateStr);
+  startDate.setHours(0, 0, 0, 0);
+
+  const currentDate = new Date();
+  currentDate.setHours(0, 0, 0, 0);
+
+  return startDate.getTime() < currentDate.getTime();
+}
 
 type ApiDeparture = {
   id: string;
@@ -204,18 +217,53 @@ export default function BookingPage() {
     }))
   );
 
-  const departure =
-    tour?.departure ||
-    (tour?.departures && tour.departures.length > 0 ? tour.departures[0] : null);
+  const departureId = searchParams.get("departureId");
+  const departure = useMemo(() => {
+    if (!tour) return null;
+    const list =
+      tour.departures && tour.departures.length > 0
+        ? tour.departures
+        : tour.departure
+        ? [tour.departure]
+        : [];
+    if (departureId) {
+      return (
+        list.find((d) => String(d.id) === String(departureId)) ||
+        list[0] ||
+        null
+      );
+    }
+    return list[0] || null;
+  }, [tour, departureId]);
+
+  const availableSeats = Number(departure?.availableSeats || 0);
+  const isDeparturePast = useMemo(() => isPastDeparture(departure?.startDate), [departure]);
+  const isDepartureSeatsOut = useMemo(() => availableSeats <= 0, [departure, availableSeats]);
+  const isDepartureInvalid = isDeparturePast || isDepartureSeatsOut;
 
   const isInternationalTour = tour?.tourType === "INTERNATIONAL";
-  const availableSeats = Number(departure?.availableSeats || 0);
   const pricePerGuest = Number(tour?.basePrice || 0);
 
   const billingGuests =
     bookingType === "GROUP"
       ? Math.max(Number(expectedGuestCount || 0), 1)
       : guests;
+
+  const {
+    isSeatsInvalid,
+    warningInfo,
+    showWarningModal,
+    closeWarning,
+  } = useSeatAvailability({
+    tourId: tourId || "",
+    departureId: departure?.id || "",
+    bookingType: bookingType,
+    adultCount: billingGuests,
+    childCount: 0,
+    expectedGuestCount: bookingType === "GROUP" ? expectedGuestCount : 0,
+    availableSeats: availableSeats,
+    isLoading: loading,
+  });
 
   const pickupFeeForTotal =
     bookingType === "INDIVIDUAL" ? pickupFeeAmount : 0;
@@ -495,8 +543,8 @@ export default function BookingPage() {
           }
         }
 
-        if ((departure.availableSeats || 0) < guests) {
-          alert(`Chỉ còn ${departure.availableSeats || 0} chỗ trống`);
+        if (isSeatsInvalid) {
+          alert(`Chỉ còn ${availableSeats} chỗ trống. Không thể đặt cho ${guests} khách.`);
           return;
         }
       }
@@ -522,7 +570,7 @@ export default function BookingPage() {
           return;
         }
 
-        if (expectedGuestCount > availableSeats) {
+        if (isSeatsInvalid) {
           alert(
             `Tour này chỉ còn ${availableSeats} chỗ. Không thể gửi yêu cầu ${expectedGuestCount} khách.`
           );
@@ -753,6 +801,23 @@ export default function BookingPage() {
 
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-[1.35fr_0.8fr]">
           <div className="space-y-8">
+            {isDepartureInvalid && (
+              <div className="rounded-[28px] border border-[#ffdad6] bg-[#ffdad6]/25 p-6 text-sm font-semibold text-[#ba1a1a] shadow-sm animate-pulse">
+                <div className="flex items-start gap-3">
+                  <span className="text-xl">⚠️</span>
+                  <div>
+                    <h3 className="text-[16px] font-extrabold uppercase mb-1">Lịch khởi hành không khả dụng</h3>
+                    <p className="leading-6">
+                      {isDeparturePast
+                        ? "Lịch khởi hành này đã quá ngày khởi hành thực tế (đã khởi hành). Vui lòng quay lại trang chi tiết tour để chọn lịch khởi hành khác."
+                        : "Lịch khởi hành này đã hết chỗ trống. Vui lòng quay lại trang chi tiết tour để chọn lịch khởi hành khác hoặc liên hệ bộ phận hỗ trợ."
+                      }
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <FormCard
               title="Thông tin liên hệ"
               subtitle="Chúng tôi sẽ dùng thông tin này để gửi xác nhận booking và liên hệ khi cần."
@@ -871,15 +936,16 @@ export default function BookingPage() {
                     value={String(expectedGuestCount || "")}
                     onChange={(value) => {
                       const nextValue = Math.max(Number(value || 0), 0);
-
-                      if (availableSeats > 0 && nextValue > availableSeats) {
-                        setExpectedGuestCount(availableSeats);
-                        return;
-                      }
-
                       setExpectedGuestCount(nextValue);
                     }}
+                    hasError={isSeatsInvalid}
                   />
+
+                  {isSeatsInvalid && (
+                    <div className="md:col-span-2 rounded-[18px] border border-[#ffdad6] bg-[#ffdad6]/20 p-4 text-sm font-semibold text-[#ba1a1a] animate-pulse">
+                      * Số khách dự kiến vượt quá số chỗ còn lại (Chỉ còn {availableSeats} chỗ). Vui lòng giảm ít nhất {warningInfo.excess} khách.
+                    </div>
+                  )}
 
                   <InputField
                     label="Số tiền cọc"
@@ -1061,47 +1127,54 @@ export default function BookingPage() {
             ) : null}
 
             {bookingType === "INDIVIDUAL" ? (
-              <FormCard
-                title="Thông tin hành khách"
-                subtitle="Vui lòng nhập đúng thông tin để thuận tiện cho việc xác nhận và làm dịch vụ."
-              >
-                <div className="space-y-6">
-                  {passengers.map((passenger, index) => (
-                    <PassengerBlock
-                      key={index}
-                      index={index + 1}
-                      value={passenger.fullName}
-                      phone={passenger.phone}
-                      passportNumber={passenger.passportNumber}
-                      passengerType={passenger.passengerType}
-                      isInternationalTour={isInternationalTour}
-                      onNameChange={(value) => {
-                        setPassengers((prev) =>
-                          prev.map((item, i) =>
-                            i === index ? { ...item, fullName: value } : item
-                          )
-                        );
-                      }}
-                      onPhoneChange={(value) => {
-                        setPassengers((prev) =>
-                          prev.map((item, i) =>
-                            i === index ? { ...item, phone: value } : item
-                          )
-                        );
-                      }}
-                      onPassportChange={(value) => {
-                        setPassengers((prev) =>
-                          prev.map((item, i) =>
-                            i === index
-                              ? { ...item, passportNumber: value }
-                              : item
-                          )
-                        );
-                      }}
-                    />
-                  ))}
-                </div>
-              </FormCard>
+              <div className={isSeatsInvalid ? "rounded-[22px] ring-2 ring-[#ba1a1a]/40 bg-[#ffdad6]/5 p-1" : ""}>
+                <FormCard
+                  title="Thông tin hành khách"
+                  subtitle="Vui lòng nhập đúng thông tin để thuận tiện cho việc xác nhận và làm dịch vụ."
+                >
+                  {isSeatsInvalid && (
+                    <div className="mb-4 rounded-[18px] border border-[#ffdad6] bg-[#ffdad6]/30 p-4 text-sm font-semibold text-[#ba1a1a] animate-pulse">
+                      * Số khách đặt ({guests} người) vượt quá số chỗ trống còn lại của chuyến đi này (Chỉ còn {availableSeats} chỗ trống). Vui lòng quay lại chọn số khách nhỏ hơn.
+                    </div>
+                  )}
+                  <div className="space-y-6">
+                    {passengers.map((passenger, index) => (
+                      <PassengerBlock
+                        key={index}
+                        index={index + 1}
+                        value={passenger.fullName}
+                        phone={passenger.phone}
+                        passportNumber={passenger.passportNumber}
+                        passengerType={passenger.passengerType}
+                        isInternationalTour={isInternationalTour}
+                        onNameChange={(value) => {
+                          setPassengers((prev) =>
+                            prev.map((item, i) =>
+                              i === index ? { ...item, fullName: value } : item
+                            )
+                          );
+                        }}
+                        onPhoneChange={(value) => {
+                          setPassengers((prev) =>
+                            prev.map((item, i) =>
+                              i === index ? { ...item, phone: value } : item
+                            )
+                          );
+                        }}
+                        onPassportChange={(value) => {
+                          setPassengers((prev) =>
+                            prev.map((item, i) =>
+                              i === index
+                                ? { ...item, passportNumber: value }
+                                : item
+                            )
+                          );
+                        }}
+                      />
+                    ))}
+                  </div>
+                </FormCard>
+              </div>
             ) : null}
 
             <FormCard
@@ -1286,15 +1359,9 @@ export default function BookingPage() {
                   <button
                     type="button"
                     onClick={handleCreateBooking}
-                    disabled={
-                      submitting ||
-                      (bookingType === "INDIVIDUAL" &&
-                        (departure?.availableSeats || 0) < guests)
-                    }
+                    disabled={submitting || isSeatsInvalid || isDepartureInvalid}
                     className={`mt-6 w-full rounded-full py-4 text-[15px] font-extrabold text-white transition-all active:scale-95 ${
-                      submitting ||
-                      (bookingType === "INDIVIDUAL" &&
-                        (departure?.availableSeats || 0) < guests)
+                      submitting || isSeatsInvalid || isDepartureInvalid
                         ? "cursor-not-allowed bg-gray-400"
                         : "bg-[linear-gradient(135deg,#9b4500_0%,#fc8a40_100%)] shadow-[0_16px_35px_rgba(155,69,0,0.25)] hover:scale-[1.01]"
                     }`}
@@ -1303,12 +1370,15 @@ export default function BookingPage() {
                       ? bookingType === "GROUP"
                         ? "ĐANG GỬI YÊU CẦU..."
                         : "ĐANG ĐẶT TOUR..."
-                      : bookingType === "INDIVIDUAL" &&
-                          (departure?.availableSeats || 0) < guests
-                        ? `Chỉ còn ${departure?.availableSeats || 0} chỗ`
-                        : bookingType === "GROUP"
-                          ? "GỬI YÊU CẦU TOUR ĐOÀN"
-                          : "XÁC NHẬN ĐẶT TOUR"}
+                      : isDeparturePast
+                        ? "ĐÃ QUÁ NGÀY KHỞI HÀNH"
+                        : isDepartureSeatsOut
+                          ? "ĐÃ HẾT CHỖ TRỐNG"
+                          : isSeatsInvalid
+                            ? `Chỉ còn ${availableSeats} chỗ trống`
+                            : bookingType === "GROUP"
+                              ? "GỬI YÊU CẦU TOUR ĐOÀN"
+                              : "XÁC NHẬN ĐẶT TOUR"}
                   </button>
 
                   <a
@@ -1346,6 +1416,14 @@ export default function BookingPage() {
             </div>
           </aside>
         </div>
+
+        <SeatWarningModal
+          isOpen={showWarningModal}
+          onClose={closeWarning}
+          selectedCount={warningInfo.selected}
+          availableSeats={warningInfo.available}
+          excessCount={warningInfo.excess}
+        />
       </div>
 
       {vnpayQrUrl ? (
@@ -1477,12 +1555,14 @@ function InputField({
   isTextarea = false,
   value,
   onChange,
+  hasError = false,
 }: {
   label: string;
   placeholder: string;
   isTextarea?: boolean;
   value?: string;
   onChange?: (value: string) => void;
+  hasError?: boolean;
 }) {
   return (
     <div>
@@ -1496,7 +1576,9 @@ function InputField({
           rows={4}
           value={value}
           onChange={(e) => onChange?.(e.target.value)}
-          className="w-full rounded-[18px] border border-[#d6e0e3] bg-white px-4 py-3 text-[15px] outline-none transition-colors placeholder:text-[#9aa6a9] focus:border-[#00606c]"
+          className={`w-full rounded-[18px] border bg-white px-4 py-3 text-[15px] outline-none transition-colors placeholder:text-[#9aa6a9] ${
+            hasError ? "border-[#ba1a1a] ring-2 ring-[#ba1a1a]/20" : "border-[#d6e0e3] focus:border-[#00606c]"
+          }`}
         />
       ) : (
         <input
@@ -1504,7 +1586,9 @@ function InputField({
           placeholder={placeholder}
           value={value}
           onChange={(e) => onChange?.(e.target.value)}
-          className="w-full rounded-[18px] border border-[#d6e0e3] bg-white px-4 py-3 text-[15px] outline-none transition-colors placeholder:text-[#9aa6a9] focus:border-[#00606c]"
+          className={`w-full rounded-[18px] border bg-white px-4 py-3 text-[15px] outline-none transition-colors placeholder:text-[#9aa6a9] ${
+            hasError ? "border-[#ba1a1a] ring-2 ring-[#ba1a1a]/20" : "border-[#d6e0e3] focus:border-[#00606c]"
+          }`}
         />
       )}
     </div>

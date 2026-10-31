@@ -21,6 +21,12 @@ import {
   Wallet,
   X,
 } from "lucide-react";
+import ExportTimeFilter, {
+  TimeFilterOptions,
+  formatReportTimeLabel,
+  formatReportFilenameSuffix,
+  filterItemsByTime,
+} from "@/components/shared/ExportTimeFilter";
 
 const API_BASE_URL = "/backend-api";
 
@@ -72,6 +78,7 @@ type Debt = {
   booking_code?: string | null;
   phone?: string | null;
   email?: string | null;
+  booked_at?: string | null;
 };
 
 type Payment = {
@@ -94,6 +101,7 @@ type Refund = {
   refund_status?: string;
   refund_method?: string | null;
   created_at?: string | null;
+  refund_at?: string | null;
 };
 
 function formatMoney(value?: string | number | null) {
@@ -187,22 +195,75 @@ export default function AdminFinance() {
   const [showServiceCost, setShowServiceCost] = useState(false);
   const [hoverChart, setHoverChart] = useState<any>(null);
 
-  async function loadData() {
+  const [timeFilter, setTimeFilter] = useState<TimeFilterOptions>({
+    type: "month",
+    month: new Date().getMonth() + 1,
+    quarter: 1,
+    year: new Date().getFullYear(),
+  });
+
+  const timeFilteredPayments = useMemo(() => {
+    return filterItemsByTime(payments, (item) => item.created_at, timeFilter);
+  }, [payments, timeFilter]);
+
+  const timeFilteredDebts = useMemo(() => {
+    return filterItemsByTime(debts, (item) => item.booked_at, timeFilter);
+  }, [debts, timeFilter]);
+
+  const timeFilteredRefunds = useMemo(() => {
+    return filterItemsByTime(refunds, (item) => item.refund_at || item.created_at, timeFilter);
+  }, [refunds, timeFilter]);
+
+  const filteredStats = useMemo(() => {
+    const paidPayments = timeFilteredPayments.filter(p => p.payment_status === 'PAID');
+    const totalRevenue = paidPayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+    
+    const totalDebt = timeFilteredDebts.reduce((sum, d) => sum + Number(d.total_amount || 0), 0);
+    const paidDebt = timeFilteredDebts.reduce((sum, d) => sum + Number(d.paid_amount || 0), 0);
+    const remainingDebt = timeFilteredDebts.reduce((sum, d) => sum + Number(d.remaining_amount || 0), 0);
+
+    const totalRefund = timeFilteredRefunds.filter(r => r.refund_status !== 'REJECTED').reduce((sum, r) => sum + Number(r.refund_amount || 0), 0);
+
+    const totalServiceCost = Number(overview?.service_cost?.flight_cost || 0) +
+      Number(overview?.service_cost?.vehicle_cost || 0) +
+      Number(overview?.service_cost?.hotel_cost || 0);
+
+    const netCash = totalRevenue - totalRefund;
+    const estimatedProfit = totalRevenue + paidDebt - totalRefund - totalServiceCost;
+
+    return {
+      totalRevenue,
+      totalDebt,
+      paidDebt,
+      remainingDebt,
+      totalRefund,
+      totalServiceCost,
+      netCash,
+      estimatedProfit
+    };
+  }, [timeFilteredPayments, timeFilteredDebts, timeFilteredRefunds, overview]);
+
+  async function loadData(startDate?: string, endDate?: string) {
     try {
       setLoading(true);
 
+      const queryParams = new URLSearchParams();
+      if (startDate) queryParams.set("startDate", startDate);
+      if (endDate) queryParams.set("endDate", endDate);
+      const queryStr = queryParams.toString() ? `?${queryParams.toString()}` : "";
+
       const [overviewRes, debtsRes, paymentsRes, refundsRes] =
         await Promise.allSettled([
-          fetch(`${API_BASE_URL}/admin/finance/overview`, {
+          fetch(`${API_BASE_URL}/admin/finance/overview${queryStr}`, {
             cache: "no-store",
           }),
-          fetch(`${API_BASE_URL}/admin/debts`, {
+          fetch(`${API_BASE_URL}/admin/debts${queryStr}`, {
             cache: "no-store",
           }),
-          fetch(`${API_BASE_URL}/admin/payments`, {
+          fetch(`${API_BASE_URL}/admin/payments${queryStr}`, {
             cache: "no-store",
           }),
-          fetch(`${API_BASE_URL}/admin/refunds`, {
+          fetch(`${API_BASE_URL}/admin/refunds${queryStr}`, {
             cache: "no-store",
           }),
         ]);
@@ -234,8 +295,30 @@ export default function AdminFinance() {
   }
 
   useEffect(() => {
-    loadData();
-  }, []);
+    let start: string | undefined;
+    let end: string | undefined;
+
+    if (timeFilter.type === "custom") {
+      if (timeFilter.customStartDate && timeFilter.customEndDate) {
+        start = timeFilter.customStartDate;
+        end = timeFilter.customEndDate;
+      } else {
+        return;
+      }
+    } else if (timeFilter.type === "month") {
+      start = `${timeFilter.year}-${String(timeFilter.month).padStart(2, "0")}-01`;
+      const lastDay = new Date(timeFilter.year, timeFilter.month, 0).getDate();
+      end = `${timeFilter.year}-${String(timeFilter.month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+    } else if (timeFilter.type === "quarter") {
+      const startMonth = (timeFilter.quarter - 1) * 3 + 1;
+      const endMonth = timeFilter.quarter * 3;
+      start = `${timeFilter.year}-${String(startMonth).padStart(2, "0")}-01`;
+      const lastDay = new Date(timeFilter.year, endMonth, 0).getDate();
+      end = `${timeFilter.year}-${String(endMonth).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+    }
+
+    loadData(start, end);
+  }, [timeFilter]);
 
   const filteredDebts = useMemo(() => {
     const q = keyword.trim().toLowerCase();
@@ -340,19 +423,19 @@ export default function AdminFinance() {
     [overview]
   );
 
-  function buildCsvContent() {
+  function buildCsvContent(filteredP: Payment[], filteredD: Debt[], statsData: any, timeLabel: string) {
     const rows = [
-      ["BÁO CÁO TÀI CHÍNH & CÔNG NỢ"],
-      [`Ngày xuất`, new Date().toLocaleString("vi-VN")],
+      [`BÁO CÁO TÀI CHÍNH & CÔNG NỢ - ${timeLabel.toUpperCase()}`],
+      [`Ngày lập`, new Date().toLocaleString("vi-VN")],
       [],
-      ["Doanh thu thực thu", stats.totalRevenue],
-      ["Tổng công nợ", stats.totalDebt],
-      ["Đã thu công nợ", stats.paidDebt],
-      ["Còn phải thu", stats.remainingDebt],
-      ["Hoàn tiền thực tế", stats.totalRefund],
-      ["Chi phí dịch vụ", stats.totalServiceCost],
-      ["Dòng tiền ròng", stats.netCash],
-      ["Lợi nhuận tạm tính", stats.estimatedProfit],
+      ["Doanh thu thực thu", statsData.totalRevenue],
+      ["Tổng công nợ", statsData.totalDebt],
+      ["Đã thu công nợ", statsData.paidDebt],
+      ["Còn phải thu", statsData.remainingDebt],
+      ["Hoàn tiền thực tế", statsData.totalRefund],
+      ["Chi phí dịch vụ", statsData.totalServiceCost],
+      ["Dòng tiền ròng", statsData.netCash],
+      ["Lợi nhuận tạm tính", statsData.estimatedProfit],
       [],
       ["CHI PHÍ DỊCH VỤ"],
       ["Loại chi phí", "Số tiền", "Ghi chú"],
@@ -362,7 +445,7 @@ export default function AdminFinance() {
       [],
       ["CÔNG NỢ KHÁCH HÀNG"],
       ["Khách hàng", "Booking", "Tổng tiền", "Đã trả", "Còn lại", "Trạng thái"],
-      ...debts.map((item) => [
+      ...filteredD.map((item) => [
         item.full_name || "",
         item.booking_code || "",
         item.total_amount || 0,
@@ -380,7 +463,7 @@ export default function AdminFinance() {
         "Ngày tạo",
         "Trạng thái",
       ],
-      ...payments.map((item) => [
+      ...filteredP.map((item) => [
         item.payment_code || "",
         item.booking_code || "",
         item.full_name || "",
@@ -400,45 +483,69 @@ export default function AdminFinance() {
     );
   }
 
-  function exportCsv() {
+  function exportCsv(filteredP: Payment[], filteredD: Debt[], statsData: any) {
+    if (timeFilter.type === "custom") {
+      if (!timeFilter.customStartDate || !timeFilter.customEndDate) {
+        alert("Vui lòng chọn đầy đủ ngày bắt đầu và ngày kết thúc.");
+        return;
+      }
+      if (timeFilter.customStartDate > timeFilter.customEndDate) {
+        alert("Ngày bắt đầu không được lớn hơn ngày kết thúc.");
+        return;
+      }
+    }
+    const timeLabel = formatReportTimeLabel(timeFilter);
+    const fileSuffix = formatReportFilenameSuffix(timeFilter);
     downloadFile(
-      `bao-cao-tai-chinh-${Date.now()}.csv`,
-      buildCsvContent(),
+      `bao-cao-tai-chinh-${fileSuffix}.csv`,
+      buildCsvContent(filteredP, filteredD, statsData, timeLabel),
       "text/csv;charset=utf-8"
     );
   }
 
-  function exportPdf() {
+  function exportPdf(filteredP: Payment[], filteredD: Debt[], statsData: any) {
+    if (timeFilter.type === "custom") {
+      if (!timeFilter.customStartDate || !timeFilter.customEndDate) {
+        alert("Vui lòng chọn đầy đủ ngày bắt đầu và ngày kết thúc.");
+        return;
+      }
+      if (timeFilter.customStartDate > timeFilter.customEndDate) {
+        alert("Ngày bắt đầu không được lớn hơn ngày kết thúc.");
+        return;
+      }
+    }
+    const timeLabel = formatReportTimeLabel(timeFilter);
     const html = `
       <html>
         <head>
           <meta charset="utf-8" />
-          <title>Báo cáo tài chính</title>
+          <title>Báo cáo tài chính ${timeLabel}</title>
           <style>
-            body { font-family: "Times New Roman", Times, serif; padding: 32px; color: #111; }
-            h1 { text-align: center; color: #00606c; font-size: 24px; }
-            h2 { color: #00606c; margin-top: 28px; font-size: 18px; }
-            table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13px; }
-            th, td { border: 1px solid #999; padding: 8px; text-align: left; }
-            th { background: #e5e9ea; }
-            .summary { margin-top: 20px; line-height: 1.8; }
-            .right { text-align: right; }
+            body { font-family: Arial, sans-serif; padding: 20px; color: #181c1d; }
+            h1 { text-align: center; color: #00606c; font-size: 24px; margin-bottom: 5px; }
+            .subtitle { text-align: center; font-size: 13px; color: #5f6b6d; margin-bottom: 20px; }
+            h2 { color: #00606c; margin-top: 28px; font-size: 16px; border-bottom: 1px solid #dfe3e4; padding-bottom: 5px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 11px; }
+            th, td { border: 1px solid #dfe3e4; padding: 8px; text-align: left; }
+            th { background: #f1f4f5; color: #3e494b; }
+            .summary { margin-top: 15px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; font-size: 13px; }
+            .summary p { margin: 5px 0; }
           </style>
         </head>
         <body>
           <h1>BÁO CÁO TÀI CHÍNH & CÔNG NỢ</h1>
-          <p class="right">Ngày xuất: ${new Date().toLocaleString("vi-VN")}</p>
+          <div class="subtitle">Báo cáo: ${timeLabel} • Ngày xuất: ${new Date().toLocaleString("vi-VN")}</div>
 
           <h2>I. Tổng quan</h2>
           <div class="summary">
-            <p><b>Doanh thu thực thu:</b> ${formatMoney(stats.totalRevenue)}</p>
-            <p><b>Tổng công nợ:</b> ${formatMoney(stats.totalDebt)}</p>
-            <p><b>Đã thu công nợ:</b> ${formatMoney(stats.paidDebt)}</p>
-            <p><b>Còn phải thu:</b> ${formatMoney(stats.remainingDebt)}</p>
-            <p><b>Hoàn tiền thực tế:</b> ${formatMoney(stats.totalRefund)}</p>
-            <p><b>Chi phí dịch vụ:</b> ${formatMoney(stats.totalServiceCost)}</p>
-            <p><b>Dòng tiền ròng:</b> ${formatMoney(stats.netCash)}</p>
-            <p><b>Lợi nhuận tạm tính:</b> ${formatMoney(stats.estimatedProfit)}</p>
+            <p><b>Doanh thu thực thu:</b> ${formatMoney(statsData.totalRevenue)}</p>
+            <p><b>Tổng công nợ:</b> ${formatMoney(statsData.totalDebt)}</p>
+            <p><b>Đã thu công nợ:</b> ${formatMoney(statsData.paidDebt)}</p>
+            <p><b>Còn phải thu:</b> ${formatMoney(statsData.remainingDebt)}</p>
+            <p><b>Hoàn tiền thực tế:</b> ${formatMoney(statsData.totalRefund)}</p>
+            <p><b>Chi phí dịch vụ:</b> ${formatMoney(statsData.totalServiceCost)}</p>
+            <p><b>Dòng tiền ròng:</b> ${formatMoney(statsData.netCash)}</p>
+            <p><b>Lợi nhuận tạm tính:</b> ${formatMoney(statsData.estimatedProfit)}</p>
           </div>
 
           <h2>II. Chi phí dịch vụ</h2>
@@ -482,7 +589,7 @@ export default function AdminFinance() {
               </tr>
             </thead>
             <tbody>
-              ${debts
+              ${filteredD
                 .map(
                   (item) => `
                 <tr>
@@ -581,8 +688,27 @@ export default function AdminFinance() {
           </button>
 
           <button
-            onClick={loadData}
-            className="inline-flex items-center gap-2 rounded-full bg-white px-5 py-3 font-black text-[#00606c] shadow-sm transition hover:bg-[#9defff]/30"
+            onClick={() => {
+              let start: string | undefined;
+              let end: string | undefined;
+
+              if (timeFilter.type === "custom") {
+                start = timeFilter.customStartDate;
+                end = timeFilter.customEndDate;
+              } else if (timeFilter.type === "month") {
+                start = `${timeFilter.year}-${String(timeFilter.month).padStart(2, "0")}-01`;
+                const lastDay = new Date(timeFilter.year, timeFilter.month, 0).getDate();
+                end = `${timeFilter.year}-${String(timeFilter.month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+              } else if (timeFilter.type === "quarter") {
+                const startMonth = (timeFilter.quarter - 1) * 3 + 1;
+                const endMonth = timeFilter.quarter * 3;
+                start = `${timeFilter.year}-${String(startMonth).padStart(2, "0")}-01`;
+                const lastDay = new Date(timeFilter.year, endMonth, 0).getDate();
+                end = `${timeFilter.year}-${String(endMonth).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+              }
+              loadData(start, end);
+            }}
+            className="inline-flex items-center gap-2 rounded-full bg-white px-5 py-3 font-black text-[#00606c] shadow-sm transition hover:bg-[#9defff]/30 cursor-pointer"
           >
             <RefreshCcw size={18} className={loading ? "animate-spin" : ""} />
             Làm mới
@@ -780,59 +906,64 @@ export default function AdminFinance() {
           onClose={() => setShowReportPreview(false)}
           wide
         >
-          <div className="space-y-6 font-['Times_New_Roman'] text-[#181c1d]">
-            <div className="text-center">
-              <h2 className="text-2xl font-bold text-[#00606c]">
-                BÁO CÁO TÀI CHÍNH & CÔNG NỢ
-              </h2>
-              <p>Ngày xuất: {new Date().toLocaleString("vi-VN")}</p>
+          <div className="space-y-6 text-[#181c1d]">
+            {/* Nhúng bộ chọn thời gian vào đầu modal xem trước */}
+            <div className="bg-[#f6fafb] p-5 rounded-2xl ring-1 ring-[#ebeeef]">
+              <ExportTimeFilter value={timeFilter} onChange={setTimeFilter} />
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="text-center font-bold">
+              <h2 className="text-xl font-bold text-[#00606c]">
+                BÁO CÁO TÀI CHÍNH & CÔNG NỢ
+              </h2>
+              <p className="text-xs text-[#5f6b6d] mt-1">Báo cáo: {formatReportTimeLabel(timeFilter)} • Ngày lập: {new Date().toLocaleDateString("vi-VN")}</p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4 text-sm font-semibold">
               <ReportLine
-                label="Doanh thu thực thu"
-                value={formatMoney(stats.totalRevenue)}
+                label="Doanh thu thực thu trong kỳ"
+                value={formatMoney(filteredStats.totalRevenue)}
               />
               <ReportLine
-                label="Tổng công nợ"
-                value={formatMoney(stats.totalDebt)}
+                label="Tổng công nợ phát sinh"
+                value={formatMoney(filteredStats.totalDebt)}
               />
               <ReportLine
                 label="Đã thu công nợ"
-                value={formatMoney(stats.paidDebt)}
+                value={formatMoney(filteredStats.paidDebt)}
               />
               <ReportLine
                 label="Còn phải thu"
-                value={formatMoney(stats.remainingDebt)}
+                value={formatMoney(filteredStats.remainingDebt)}
               />
               <ReportLine
                 label="Hoàn tiền thực tế"
-                value={formatMoney(stats.totalRefund)}
+                value={formatMoney(filteredStats.totalRefund)}
               />
               <ReportLine
-                label="Chi phí dịch vụ"
-                value={formatMoney(stats.totalServiceCost)}
+                label="Chi phí dịch vụ (Tổng quan)"
+                value={formatMoney(filteredStats.totalServiceCost)}
               />
               <ReportLine
                 label="Dòng tiền ròng"
-                value={formatMoney(stats.netCash)}
+                value={formatMoney(filteredStats.netCash)}
               />
               <ReportLine
                 label="Lợi nhuận tạm tính"
-                value={formatMoney(stats.estimatedProfit)}
+                value={formatMoney(filteredStats.estimatedProfit)}
               />
             </div>
 
             <div className="flex justify-end gap-3 border-t pt-5">
               <button
-                onClick={exportCsv}
+                onClick={() => exportCsv(timeFilteredPayments, timeFilteredDebts, filteredStats)}
                 className="rounded-full bg-[#f1f4f5] px-6 py-3 font-black text-[#00606c]"
               >
                 Xuất CSV
               </button>
 
               <button
-                onClick={exportPdf}
+                onClick={() => exportPdf(timeFilteredPayments, timeFilteredDebts, filteredStats)}
                 className="rounded-full bg-[#00606c] px-6 py-3 font-black text-white"
               >
                 Xuất PDF

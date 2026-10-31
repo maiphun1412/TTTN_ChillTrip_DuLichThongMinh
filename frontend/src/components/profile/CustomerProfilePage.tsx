@@ -104,8 +104,8 @@ export default function CustomerProfilePage() {
         const data = await getMyTravelPlaces();
         setTravelPlaces(data.places || []);
         setTravelPlaceTotal(data.total || 0);
-          } catch (error) {
-        console.error("LOAD_TRAVEL_PLACES_ERROR:", error);
+      } catch (error) {
+        console.warn("LOAD_TRAVEL_PLACES_ERROR:", error);
         setTravelPlaces([]);
         setTravelPlaceTotal(0);
       } finally {
