@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { withPrivacyAccessLog } from "@/lib/privacy/log";
+import { queryId } from "@/lib/privacy/snapshots";
 import { verifyAccessToken } from "@/lib/auth";
 
 type CurrentUserRow = {
@@ -90,7 +92,7 @@ async function getCurrentStaff(request: NextRequest) {
   return { error: null, user };
 }
 
-export async function GET(request: NextRequest) {
+async function getHandler(request: NextRequest) {
   try {
     const auth = await getCurrentStaff(request);
     if (auth.error) return auth.error;
@@ -308,3 +310,5 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+
+export const GET = withPrivacyAccessLog(getHandler, { dataType: "CUSTOMER_PROFILE", purpose: "CUSTOMER_SUPPORT", owner: async (req) => ({ customerId: await queryId(req) }) });

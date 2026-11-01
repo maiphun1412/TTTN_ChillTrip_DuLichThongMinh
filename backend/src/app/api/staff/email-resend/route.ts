@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { withAuditLog } from "@/lib/privacy/log";
+import { queryId } from "@/lib/privacy/snapshots";
 import { verifyAccessToken } from "@/lib/auth";
 
 type CurrentUserRow = {
@@ -70,7 +72,7 @@ async function getCurrentStaff(request: NextRequest) {
   return { error: null, user };
 }
 
-export async function PATCH(request: NextRequest) {
+async function patchHandler(request: NextRequest) {
   try {
     const auth = await getCurrentStaff(request);
     if (auth.error) return auth.error;
@@ -110,3 +112,5 @@ export async function PATCH(request: NextRequest) {
     );
   }
 }
+
+export const PATCH = withAuditLog(patchHandler, { module: "STAFF_OPERATION", entityName: "emails", action: "RESEND_EMAIL", getId: queryId });

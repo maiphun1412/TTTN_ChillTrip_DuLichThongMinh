@@ -5,6 +5,35 @@ export async function loadCustomerSnapshot(id: string) {
   return prisma.customers.findUnique({ where: { id: BigInt(id) } });
 }
 
+/** Chụp đơn đặt chỗ (trạng thái, thanh toán...) để ghi "trước/sau". */
+export async function loadBookingSnapshot(id: string) {
+  return prisma.bookings.findUnique({ where: { id: BigInt(id) } });
+}
+
+/** Lấy chủ dữ liệu (khách hàng) của một đơn đặt chỗ. */
+export async function bookingOwner(id: string | undefined) {
+  if (!id) return {};
+  const booking = await prisma.bookings.findUnique({
+    where: { id: BigInt(id) },
+    select: { customer_id: true },
+  });
+  return booking ? { customerId: booking.customer_id } : {};
+}
+
+/** Lấy ?id=... trên URL. */
+export async function queryId(req: Request) {
+  return new URL(req.url).searchParams.get("id") ?? undefined;
+}
+
+/** Lấy một trường id trong body JSON (đọc trên bản sao, không ảnh hưởng API). */
+export function bodyId(field: string) {
+  return async (req: Request) => {
+    const body = (await req.clone().json()) as Record<string, unknown>;
+    const value = body?.[field];
+    return value === null || value === undefined || value === "" ? undefined : String(value);
+  };
+}
+
 /** Chụp tài khoản nhân sự, không lấy mật khẩu. */
 export async function loadUserSnapshot(id: string) {
   const user = await prisma.users.findUnique({

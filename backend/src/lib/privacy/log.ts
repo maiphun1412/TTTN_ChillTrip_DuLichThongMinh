@@ -81,12 +81,12 @@ function maskTail(value: string, keep = 3) {
   return "*".repeat(Math.max(value.length - keep, 0)) + value.slice(-keep);
 }
 
-function maskPhone(value: string) {
+export function maskPhone(value: string) {
   if (value.length <= 5) return maskTail(value, 2);
   return value.slice(0, 2) + "*".repeat(value.length - 5) + value.slice(-3);
 }
 
-function maskEmail(value: string) {
+export function maskEmail(value: string) {
   const [local, domain] = value.split("@");
   if (!domain) return maskTail(value, 2);
   return `${local.slice(0, 2)}***@${domain}`;
@@ -258,8 +258,8 @@ export function withPrivacyAccessLog<R extends Request, C>(
     dataType: string;
     purpose?: string;
     owner?: (req: R, ctx: C) => Promise<Owner>;
-    /** API danh sách: ghi mỗi bản ghi trả về 1 dòng (id là id khách hàng hoặc id tài khoản) */
-    listOwners?: "customer" | "user";
+    /** API danh sách: ghi mỗi bản ghi trả về 1 dòng (id là id khách hàng, tài khoản hoặc đơn đặt chỗ) */
+    listOwners?: "customer" | "user" | "booking";
   }
 ): RouteHandler<R, C> {
   return async (req, ctx) => {
@@ -267,22 +267,40 @@ export function withPrivacyAccessLog<R extends Request, C>(
     const denied = res.status === 401 || res.status === 403;
     if (!res.ok && !denied) return res;
 
+    // Trang Tổng quan gửi kèm x-view-source: dashboard. Chỉ đổi phần mô tả mục đích,
+    // việc ghi log luôn diễn ra nên client không thể dùng header này để né nhật ký.
+    const fromDashboard = req.headers.get("x-view-source") === "dashboard";
+
     const entry: PrivacyAccessEntry = {
       dataType: options.dataType,
-      purpose: options.purpose,
+      purpose: fromDashboard ? "DASHBOARD_STATISTICS" : options.purpose,
       result: res.ok ? "ALLOWED" : "DENIED",
       reason: denied ? deniedReason(res.status) : null,
     };
 
     if (res.ok && options.listOwners) {
       const body = await safely(() => res.clone().json());
-      const owners = listFromBody(body)
-        .filter((item) => item?.id !== undefined && item?.id !== null)
-        .map((item) =>
-          options.listOwners === "customer"
-            ? { customerId: item.id as Id }
-            : { userId: item.id as Id }
+      const ids = listFromBody(body)
+        .map((item) => item?.id)
+        .filter((id): id is string | number => id !== undefined && id !== null);
+
+      let owners: Owner[];
+      if (options.listOwners === "booking") {
+        const bookingIds = ids.map((id) => toBigInt(id)).filter((id): id is bigint => id !== null);
+        const bookings = bookingIds.length
+          ? await prisma.bookings.findMany({
+              where: { id: { in: bookingIds } },
+              select: { customer_id: true },
+            })
+          : [];
+        const customerIds = Array.from(new Set(bookings.map((b) => String(b.customer_id))));
+        owners = customerIds.map((customerId) => ({ customerId }));
+      } else {
+        owners = ids.map((id) =>
+          options.listOwners === "customer" ? { customerId: id } : { userId: id }
         );
+      }
+
       if (owners.length) await logPrivacyAccessMany(req, entry, owners);
       return res;
     }

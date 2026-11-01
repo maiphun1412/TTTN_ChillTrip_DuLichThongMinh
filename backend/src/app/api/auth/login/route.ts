@@ -4,10 +4,18 @@ import { comparePassword, signAccessToken } from "@/lib/auth";
 import { z } from "zod";
 import { NextResponse } from "next/server";
 import { logAudit } from "@/lib/privacy/log";
+import {
+  LOCK_MINUTES,
+  MAX_FAILED_ATTEMPTS,
+  accountKey,
+  formatUnlockTime,
+  getLoginLockState,
+  lockedMessage,
+} from "@/lib/privacy/login-guard";
 
 function logLogin(
   req: Request,
-  action: "LOGIN_SUCCESS" | "LOGIN_FAILED" | "LOGIN_BLOCKED",
+  action: "LOGIN_SUCCESS" | "LOGIN_FAILED" | "LOGIN_BLOCKED" | "LOGIN_LOCKOUT",
   userId: bigint | null,
   detail: Record<string, unknown>
 ) {
@@ -54,20 +62,52 @@ export async function POST(req: Request) {
       },
     });
 
-    if (!user) {
-      await logLogin(req, "LOGIN_FAILED", null, {
-        reason: "ACCOUNT_NOT_FOUND",
-        email,
-        phone,
+    // Chống dò mật khẩu: kiểm tra khóa tạm trước khi so mật khẩu
+    const key = accountKey((email || phone)!);
+    const unknownAccount = user ? {} : { email, phone };
+    const lock = await getLoginLockState(key, user?.id ?? null);
+
+    if (lock.locked && lock.lockedUntil) {
+      await logLogin(req, "LOGIN_BLOCKED", user?.id ?? null, {
+        reason: "TEMP_LOCKED",
+        accountKey: key,
+        lockedUntil: lock.lockedUntil.toISOString(),
+        ...unknownAccount,
       });
-      return fail("Sai tài khoản hoặc mật khẩu", 401);
+      return fail(lockedMessage(lock.lockedUntil), 429);
     }
 
-    const valid = await comparePassword(password, user.password_hash);
+    const valid = user ? await comparePassword(password, user.password_hash) : false;
 
-    if (!valid) {
-      await logLogin(req, "LOGIN_FAILED", user.id, { reason: "WRONG_PASSWORD" });
-      return fail("Sai tài khoản hoặc mật khẩu", 401);
+    if (!user || !valid) {
+      const attempt = lock.failures + 1;
+      const attemptsLeft = MAX_FAILED_ATTEMPTS - attempt;
+
+      await logLogin(req, "LOGIN_FAILED", user?.id ?? null, {
+        reason: user ? "WRONG_PASSWORD" : "ACCOUNT_NOT_FOUND",
+        accountKey: key,
+        attempt,
+        ...unknownAccount,
+      });
+
+      if (attemptsLeft <= 0) {
+        const lockedUntil = new Date(Date.now() + LOCK_MINUTES * 60 * 1000);
+        await logLogin(req, "LOGIN_LOCKOUT", user?.id ?? null, {
+          reason: "TOO_MANY_FAILED_ATTEMPTS",
+          accountKey: key,
+          lockedUntil: lockedUntil.toISOString(),
+          ...unknownAccount,
+        });
+        return fail(
+          `Bạn đã nhập sai tên đăng nhập hoặc mật khẩu ${MAX_FAILED_ATTEMPTS} lần. Tài khoản bị tạm khóa ${LOCK_MINUTES} phút, vui lòng thử lại lúc ${formatUnlockTime(lockedUntil)}.`,
+          429
+        );
+      }
+
+      return fail(
+        `Sai tên đăng nhập hoặc mật khẩu. Bạn còn ${attemptsLeft} lần thử trước khi tài khoản bị tạm khóa ${LOCK_MINUTES} phút.`,
+        401
+      );
     }
 
     if (user.status !== "ACTIVE") {
