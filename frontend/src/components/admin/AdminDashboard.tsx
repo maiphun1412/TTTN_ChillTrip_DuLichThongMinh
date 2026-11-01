@@ -137,7 +137,7 @@ export default function AdminDashboard() {
           fetch(`${API_BASE_URL}/admin/bookings?limit=100`, {
             cache: "no-store",
           }),
-          fetch(`${API_BASE_URL}/admin/customers`, { cache: "no-store" }),
+          fetch(`${API_BASE_URL}/admin/customers`, { cache: "no-store", headers: { "x-view-source": "dashboard" } }),
           fetch(`${API_BASE_URL}/admin/schedules/today`, {
             cache: "no-store",
           }),

@@ -2,11 +2,21 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { ok, fail } from "@/lib/api-response";
 import { requireRole } from "@/lib/permissions";
-import { logAudit } from "@/lib/privacy/log";
+import { logAudit, maskEmail, maskPhone } from "@/lib/privacy/log";
 
 // Chỉ có GET: nhật ký chỉ được đọc, không có API sửa hay xóa.
 
-const SENSITIVE_ACTIONS = ["CHANGE_ROLE", "LOCK", "UNLOCK", "DELETE"];
+const SENSITIVE_ACTIONS = ["CHANGE_ROLE", "LOCK", "UNLOCK", "DELETE", "REFUND_BOOKING"];
+
+type Row = Record<string, unknown>;
+
+type OwnerInfo = {
+  name: string;
+  type: string;
+  code: string | null;
+  phone: string | null;
+  email: string | null;
+};
 
 function serialize<T>(data: T): T {
   return JSON.parse(
@@ -28,6 +38,50 @@ function whereSql(parts: Prisma.Sql[]) {
   return parts.length ? Prisma.sql`WHERE ${Prisma.join(parts, " AND ")}` : Prisma.empty;
 }
 
+/**
+ * Lấy thông tin chủ dữ liệu cho các dòng nhật ký đang hiển thị.
+ * Che SĐT, email ngay tại server: trang nhật ký chỉ cần nhận ra đúng người,
+ * không cần (và không được) thấy đầy đủ thông tin liên lạc.
+ */
+async function loadOwners(customerIds: bigint[], userIds: bigint[]) {
+  const byCustomer = new Map<string, OwnerInfo>();
+  const byUser = new Map<string, OwnerInfo>();
+
+  if (customerIds.length) {
+    const customers = await prisma.customers.findMany({
+      where: { id: { in: customerIds } },
+      select: { id: true, full_name: true, customer_code: true, phone: true, email: true },
+    });
+    for (const c of customers) {
+      byCustomer.set(String(c.id), {
+        name: c.full_name,
+        type: "Khách hàng",
+        code: c.customer_code,
+        phone: c.phone ? maskPhone(c.phone) : null,
+        email: c.email ? maskEmail(c.email) : null,
+      });
+    }
+  }
+
+  if (userIds.length) {
+    const users = await prisma.users.findMany({
+      where: { id: { in: userIds } },
+      select: { id: true, full_name: true, phone: true, email: true, roles: { select: { code: true } } },
+    });
+    for (const u of users) {
+      byUser.set(String(u.id), {
+        name: u.full_name,
+        type: u.roles?.code ?? "",
+        code: null,
+        phone: u.phone ? maskPhone(u.phone) : null,
+        email: u.email ? maskEmail(u.email) : null,
+      });
+    }
+  }
+
+  return { byCustomer, byUser };
+}
+
 export async function GET(req: Request) {
   const auth = await requireRole(req, ["ADMIN"]);
   if (!auth.ok) {
@@ -43,46 +97,89 @@ export async function GET(req: Request) {
     const keyword = searchParams.get("q")?.trim() || "";
     const result = searchParams.get("result")?.trim() || "";
     const action = searchParams.get("action")?.trim() || "";
+    const role = searchParams.get("role")?.trim() || "";
     const from = parseDate(searchParams.get("from"));
     const to = parseDate(searchParams.get("to"), true);
     const page = Math.max(1, Number(searchParams.get("page")) || 1);
     const pageSize = Math.min(100, Math.max(5, Number(searchParams.get("pageSize")) || 20));
     const offset = (page - 1) * pageSize;
     const like = `%${keyword}%`;
+    const validRole = ["ADMIN", "STAFF", "GUIDE", "CUSTOMER"].includes(role) ? role : "";
 
-    let items: unknown[] = [];
+    let items: Row[] = [];
     let total = 0;
 
     if (type === "access") {
       const parts: Prisma.Sql[] = [];
       if (result === "ALLOWED" || result === "DENIED") parts.push(Prisma.sql`l.result = ${result}`);
+      if (validRole) parts.push(Prisma.sql`l.accessor_role = ${validRole}`);
       if (from) parts.push(Prisma.sql`l.created_at >= ${from}`);
       if (to) parts.push(Prisma.sql`l.created_at < ${to}`);
       if (keyword) {
         parts.push(
-          Prisma.sql`(au.full_name LIKE ${like} OR ou.full_name LIKE ${like} OR oc.full_name LIKE ${like} OR l.data_type LIKE ${like} OR l.reason LIKE ${like})`
+          Prisma.sql`(au.full_name LIKE ${like} OR ou.full_name LIKE ${like} OR oc.full_name LIKE ${like})`
         );
       }
-      const where = whereSql(parts);
-      const from_ = Prisma.sql`
+
+      // Một lần mở danh sách ghi mỗi người 1 dòng (để từng khách biết ai đã xem mình).
+      // Trên trang Admin, gộp các dòng cùng người xem, cùng loại dữ liệu, cùng giây thành 1 lượt.
+      const grouped = Prisma.sql`
+        SELECT MIN(l.id) AS id, MAX(l.created_at) AS createdAt,
+               l.accessor_user_id AS accessorUserId, l.accessor_role AS accessorRole,
+               l.data_type AS dataType, l.result, l.reason, l.purpose, l.departure_id AS departureId,
+               STRING_AGG(CONCAT(ISNULL(CAST(l.data_owner_customer_id AS varchar(20)), ''), ':',
+                                 ISNULL(CAST(l.data_owner_user_id AS varchar(20)), '')), ',') AS ownerKeys
         FROM privacy_access_logs l
         LEFT JOIN users au ON au.id = l.accessor_user_id
         LEFT JOIN users ou ON ou.id = l.data_owner_user_id
-        LEFT JOIN customers oc ON oc.id = l.data_owner_customer_id`;
+        LEFT JOIN customers oc ON oc.id = l.data_owner_customer_id
+        ${whereSql(parts)}
+        GROUP BY l.accessor_user_id, l.accessor_role, l.data_type, l.result, l.reason, l.purpose,
+                 l.departure_id, DATEADD(second, DATEDIFF(second, '2020-01-01', l.created_at), CAST('2020-01-01' AS datetime2))`;
 
-      items = await prisma.$queryRaw`
-        SELECT l.id, l.created_at AS createdAt, l.accessor_user_id AS accessorUserId,
-               au.full_name AS accessorName, l.accessor_role AS accessorRole,
-               l.data_owner_user_id AS ownerUserId,
-               COALESCE(oc.full_name, ou.full_name) AS ownerName,
-               l.data_type AS dataType, l.action, l.result, l.reason, l.purpose,
-               l.departure_id AS departureId, l.ip_address AS ipAddress
-        ${from_} ${where}
-        ORDER BY l.created_at DESC, l.id DESC
+      const rows = await prisma.$queryRaw<Row[]>`
+        SELECT g.*, au.full_name AS accessorName, t.tour_name AS tourName, ds.departure_code AS departureCode
+        FROM (${grouped}) g
+        LEFT JOIN users au ON au.id = g.accessorUserId
+        LEFT JOIN departure_schedules ds ON ds.id = g.departureId
+        LEFT JOIN tours t ON t.id = ds.tour_id
+        ORDER BY g.createdAt DESC, g.id DESC
         OFFSET ${offset} ROWS FETCH NEXT ${pageSize} ROWS ONLY`;
+
       const [{ count }] = await prisma.$queryRaw<{ count: number }[]>`
-        SELECT COUNT(*) AS count ${from_} ${where}`;
+        SELECT COUNT(*) AS count FROM (${grouped}) g`;
       total = Number(count);
+
+      const keysOf = (row: Row) =>
+        Array.from(new Set(String(row.ownerKeys ?? "").split(",").filter((k) => k && k !== ":")));
+
+      const customerIds = new Set<bigint>();
+      const userIds = new Set<bigint>();
+      for (const row of rows) {
+        for (const key of keysOf(row)) {
+          const [customerId, userId] = key.split(":");
+          if (customerId) customerIds.add(BigInt(customerId));
+          else if (userId) userIds.add(BigInt(userId));
+        }
+      }
+
+      const { byCustomer, byUser } = await loadOwners([...customerIds], [...userIds]);
+
+      items = rows.map((row) => {
+        const owners: OwnerInfo[] = [];
+        const seen = new Set<string>();
+        for (const key of keysOf(row)) {
+          const [customerId, userId] = key.split(":");
+          const owner = customerId ? byCustomer.get(customerId) : userId ? byUser.get(userId) : undefined;
+          const id = customerId ? `c${customerId}` : `u${userId}`;
+          if (owner && !seen.has(id)) {
+            seen.add(id);
+            owners.push(owner);
+          }
+        }
+        const { ownerKeys: _ownerKeys, ...rest } = row;
+        return { ...rest, owners, ownerCount: owners.length };
+      });
     } else {
       const parts: Prisma.Sql[] = [];
       if (action === "SENSITIVE") {
@@ -92,28 +189,36 @@ export async function GET(req: Request) {
       } else if (action) {
         parts.push(Prisma.sql`a.action_name = ${action}`);
       }
+      if (validRole) parts.push(Prisma.sql`r.code = ${validRole}`);
       if (from) parts.push(Prisma.sql`a.created_at >= ${from}`);
       if (to) parts.push(Prisma.sql`a.created_at < ${to}`);
       if (keyword) {
         parts.push(
-          Prisma.sql`(u.full_name LIKE ${like} OR a.module_name LIKE ${like} OR a.action_name LIKE ${like} OR a.entity_name LIKE ${like})`
+          Prisma.sql`(u.full_name LIKE ${like} OR eu.full_name LIKE ${like} OR ec.full_name LIKE ${like} OR ebc.full_name LIKE ${like})`
         );
       }
-      const where = whereSql(parts);
       const from_ = Prisma.sql`
         FROM audit_logs a
         LEFT JOIN users u ON u.id = a.user_id
         LEFT JOIN roles r ON r.id = u.role_id
         LEFT JOIN users eu ON a.entity_name = 'users' AND eu.id = a.entity_id
-        LEFT JOIN customers ec ON a.entity_name IN ('customers', 'customer_messages') AND ec.id = a.entity_id`;
+        LEFT JOIN customers ec ON a.entity_name IN ('customers', 'customer_messages') AND ec.id = a.entity_id
+        LEFT JOIN bookings eb ON a.entity_name = 'bookings' AND eb.id = a.entity_id
+        LEFT JOIN customers ebc ON ebc.id = eb.customer_id
+        LEFT JOIN departure_schedules eds ON a.entity_name = 'departure_schedules' AND eds.id = a.entity_id
+        LEFT JOIN tours et ON et.id = eds.tour_id`;
+      const where = whereSql(parts);
 
-      items = await prisma.$queryRaw`
+      items = await prisma.$queryRaw<Row[]>`
         SELECT a.id, a.created_at AS createdAt, a.user_id AS actorUserId,
                u.full_name AS actorName, r.code AS actorRole,
                a.module_name AS module, a.action_name AS action,
                a.entity_name AS entityName, a.entity_id AS entityId,
-               COALESCE(eu.full_name, ec.full_name) AS entityLabel,
-               a.old_data AS oldData, a.new_data AS newData, a.ip_address AS ipAddress
+               COALESCE(eu.full_name, ec.full_name,
+                 CASE WHEN eb.id IS NOT NULL THEN CONCAT(eb.booking_code, N' của ', ebc.full_name) END,
+                 CASE WHEN eds.id IS NOT NULL THEN CONCAT(et.tour_name, N' (', eds.departure_code, N')') END
+               ) AS entityLabel,
+               a.old_data AS oldData, a.new_data AS newData
         ${from_} ${where}
         ORDER BY a.created_at DESC, a.id DESC
         OFFSET ${offset} ROWS FETCH NEXT ${pageSize} ROWS ONLY`;
@@ -154,14 +259,14 @@ export async function GET(req: Request) {
     const alerts = [
       ...deniedBursts.map((row) => ({
         level: "danger",
-        message: `${row.name || "Người dùng #" + row.userId} bị từ chối truy cập dữ liệu khách ${row.count} lần trong 24 giờ`,
+        message: `${row.name || "Người dùng #" + row.userId} bị chặn khi truy cập dữ liệu khách ${row.count} lần trong 24 giờ`,
       })),
       ...loginBursts.map((row) => ({
         level: "danger",
         message: `${row.name || "Tài khoản #" + row.userId} đăng nhập sai ${row.count} lần trong 24 giờ`,
       })),
       ...(Number(roleChanges[0]?.count) > 0
-        ? [{ level: "warning", message: `Có ${roleChanges[0].count} lần đổi quyền tài khoản trong 24 giờ` }]
+        ? [{ level: "warning", message: `Có ${roleChanges[0].count} lần đổi vai trò tài khoản trong 24 giờ` }]
         : []),
     ];
 

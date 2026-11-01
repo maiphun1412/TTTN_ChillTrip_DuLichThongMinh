@@ -19,17 +19,27 @@ const API_BASE_URL = "/backend-api";
 
 type LogType = "access" | "audit";
 
+type OwnerInfo = {
+  name: string;
+  type: string;
+  code: string | null;
+  phone: string | null;
+  email: string | null;
+};
+
 type AccessLog = {
   id: string;
   createdAt: string;
   accessorName: string | null;
   accessorRole: string | null;
-  ownerName: string | null;
   dataType: string;
   result: "ALLOWED" | "DENIED";
   reason: string | null;
   purpose: string | null;
-  ipAddress: string | null;
+  tourName: string | null;
+  departureCode: string | null;
+  owners: OwnerInfo[];
+  ownerCount: number;
 };
 
 type AuditLog = {
@@ -59,25 +69,17 @@ const ROLE_LABEL: Record<string, string> = {
   CUSTOMER: "Khách hàng",
 };
 
-// Câu mô tả hành động "xem" theo loại dữ liệu
-const ACCESS_VERB: Record<string, string> = {
-  CUSTOMER_LIST: "xem thông tin trong danh sách khách hàng",
-  CUSTOMER_PROFILE: "mở hồ sơ khách hàng",
-  MESSAGE: "đọc tin nhắn của khách",
-  STAFF_LIST: "xem thông tin trong danh sách nhân sự",
-  STAFF_PROFILE: "mở hồ sơ nhân sự",
-  PASSENGER_LIST: "xem danh sách hành khách",
-  CONTACT_INFO: "xem thông tin liên lạc",
-  IDENTITY_DOC: "xem giấy tờ tùy thân",
-  HEALTH_NOTE: "xem ghi chú sức khỏe",
-};
-
 const REASON_LABEL: Record<string, string> = {
   UNAUTHENTICATED: "Chưa đăng nhập",
   ROLE_NOT_ALLOWED: "Vai trò không có quyền xem dữ liệu này",
   GUIDE_NOT_ASSIGNED: "Hướng dẫn viên không được phân công chuyến này",
   TRIP_EXPIRED: "Chuyến đi đã hết thời hạn được xem",
   CUSTOMER_NOT_IN_TRIP: "Khách không thuộc chuyến đi này",
+  TRIP_NOT_YET_IN_WINDOW: "Chưa đến thời gian được xem dữ liệu chuyến này",
+  TRIP_CANCELLED: "Chuyến đi đã bị hủy",
+  NOT_BOOKING_OWNER: "Không phải chủ đơn đặt chỗ",
+  TEMP_LOCKED: "Đang bị tạm khóa 60 phút do nhập sai quá 5 lần",
+  TOO_MANY_FAILED_ATTEMPTS: "Nhập sai tên đăng nhập hoặc mật khẩu 5 lần",
   WRONG_PASSWORD: "Sai mật khẩu",
   ACCOUNT_NOT_FOUND: "Tài khoản không tồn tại",
   ACCOUNT_LOCKED: "Tài khoản đang bị khóa",
@@ -85,6 +87,7 @@ const REASON_LABEL: Record<string, string> = {
 
 const PURPOSE_LABEL: Record<string, string> = {
   ADMINISTRATION: "Quản trị hệ thống",
+  DASHBOARD_STATISTICS: "Thống kê trên trang Tổng quan",
   CUSTOMER_SUPPORT: "Hỗ trợ khách hàng",
   TOUR_OPERATION: "Điều hành tour",
 };
@@ -98,8 +101,19 @@ const ACTION_FILTERS: [string, string][] = [
   ["LOCK", "Khóa tài khoản"],
   ["UNLOCK", "Mở khóa tài khoản"],
   ["SEND_MESSAGE", "Gửi tin nhắn"],
+  ["CONFIRM_BOOKING", "Xác nhận đơn đặt chỗ"],
+  ["REFUND_BOOKING", "Hoàn tiền"],
+  ["RECORD_PAYMENT", "Ghi nhận thanh toán"],
+  ["SEND_EMAIL", "Gửi email"],
+  ["UPDATE_STATUS", "HDV cập nhật trạng thái chuyến"],
+  ["CREATE_INCIDENT", "HDV báo sự cố"],
+  ["SUBMIT_REPORT", "HDV gửi báo cáo"],
+  ["GRANT_CONSENT", "Khách cho phép xem SĐT"],
+  ["REVOKE_CONSENT", "Khách thu hồi quyền xem SĐT"],
   ["LOGIN_SUCCESS", "Đăng nhập thành công"],
   ["LOGIN_FAILED", "Đăng nhập thất bại"],
+  ["LOGIN_LOCKOUT", "Bị khóa tạm do nhập sai 5 lần"],
+  ["LOGIN_BLOCKED", "Đăng nhập khi đang bị khóa"],
   ["VIEW_LOGS", "Mở nhật ký"],
 ];
 
@@ -116,10 +130,15 @@ const FIELD_LABEL: Record<string, string> = {
   address: "Địa chỉ",
   notes: "Ghi chú",
   reason: "Lý do",
+  booking_code: "Mã đơn",
+  booking_status: "Trạng thái đơn",
+  payment_status: "Thanh toán",
+  total_amount: "Tổng tiền",
+  paid_amount: "Đã thanh toán",
 };
 
 const HIDDEN_FIELDS = new Set(["id", "user_id", "created_at", "updated_at"]);
-const SENSITIVE = ["CHANGE_ROLE", "LOCK", "UNLOCK", "DELETE"];
+const SENSITIVE = ["CHANGE_ROLE", "LOCK", "UNLOCK", "DELETE", "REFUND_BOOKING"];
 
 const ROW_BG: Record<Tone, string> = {
   denied: "bg-red-50 hover:bg-red-100/70",
@@ -163,39 +182,68 @@ function initials(name: string | null) {
   return ((words[0]?.[0] ?? "") + (words.length > 1 ? words[words.length - 1][0] : "")).toUpperCase();
 }
 
-function friendlyIp(ip: string | null) {
-  if (!ip) return "Không xác định";
-  if (ip === "::1" || ip === "127.0.0.1" || ip === "::ffff:127.0.0.1") {
-    return "Máy nội bộ (localhost)";
-  }
-  return ip;
-}
-
 function roleText(code: unknown) {
   return typeof code === "string" ? ROLE_LABEL[code] || code : "không rõ";
 }
 
-const LIST_NAME: Record<string, string> = {
-  CUSTOMER_LIST: "danh sách khách hàng",
-  STAFF_LIST: "danh sách nhân sự",
-  PASSENGER_LIST: "danh sách hành khách",
-};
+function lowerFirst(text: string) {
+  return text.charAt(0).toLowerCase() + text.slice(1);
+}
 
+function tripText(log: AccessLog) {
+  if (!log.tourName) return "";
+  return ` chuyến ${log.tourName}${log.departureCode ? ` (${log.departureCode})` : ""}`;
+}
+
+// Câu mô tả hành động "xem dữ liệu": nói rõ đã mở trang/chức năng gì và của ai
 function describeAccess(log: AccessLog) {
-  const list = LIST_NAME[log.dataType];
-  if (list) {
-    // Mở 1 danh sách -> mỗi người có trong danh sách được ghi 1 dòng
-    if (log.result === "DENIED") return `Cố mở ${list} — đã bị chặn`;
-    return log.ownerName
-      ? `Mở ${list} — thấy thông tin của ${log.ownerName}`
-      : `Mở ${list}`;
+  const n = log.ownerCount;
+  const who = log.owners[0]?.name ? ` ${log.owners[0].name}` : "";
+  const trip = tripText(log);
+  let text: string;
+
+  switch (log.dataType) {
+    case "CUSTOMER_LIST":
+      text =
+        log.purpose === "DASHBOARD_STATISTICS"
+          ? `Mở trang Tổng quan, tải dữ liệu ${n} khách hàng để thống kê`
+          : `Xem danh sách khách hàng${n ? ` (${n} khách)` : ""}`;
+      break;
+    case "STAFF_LIST":
+      text = `Xem danh sách nhân sự${n ? ` (${n} người)` : ""}`;
+      break;
+    case "BOOKING_LIST":
+      text = `Xem danh sách đơn đặt chỗ${n ? ` (của ${n} khách)` : ""}`;
+      break;
+    case "PASSENGER_LIST":
+      text = `Xem danh sách hành khách${trip}${n ? ` (${n} khách)` : ""}`;
+      break;
+    case "CUSTOMER_PROFILE":
+      text = `Mở hồ sơ khách hàng${who}`;
+      break;
+    case "BOOKING_DETAIL":
+      text = `Mở chi tiết đơn đặt chỗ${who ? ` của khách${who}` : ""}`;
+      break;
+    case "STAFF_PROFILE":
+      text = `Mở hồ sơ nhân sự${who}`;
+      break;
+    case "MESSAGE":
+      text = `Đọc tin nhắn của khách${who}`;
+      break;
+    case "CONTACT_INFO":
+      text = `Xem số điện thoại của khách${who}${trip}`;
+      break;
+    case "IDENTITY_DOC":
+      text = `Xem giấy tờ tùy thân của khách${who}`;
+      break;
+    case "HEALTH_NOTE":
+      text = `Xem ghi chú sức khỏe của khách${who}`;
+      break;
+    default:
+      text = `Xem dữ liệu cá nhân${who ? ` của${who}` : ""}`;
   }
 
-  const verb = ACCESS_VERB[log.dataType] || "xem dữ liệu cá nhân";
-  const owner = log.ownerName ? ` của ${log.ownerName}` : "";
-  return log.result === "DENIED"
-    ? `Cố ${verb}${owner} — đã bị chặn`
-    : `${verb.charAt(0).toUpperCase()}${verb.slice(1)}${owner}`;
+  return log.result === "DENIED" ? `Cố ${lowerFirst(text)} — bị chặn` : text;
 }
 
 function entityText(log: AuditLog, oldData: Json | null, newData: Json | null) {
@@ -203,12 +251,17 @@ function entityText(log: AuditLog, oldData: Json | null, newData: Json | null) {
     log.entityLabel ||
     (oldData?.full_name as string | undefined) ||
     (newData?.full_name as string | undefined);
-  const kind =
-    log.entityName === "users"
-      ? "tài khoản"
-      : log.entityName === "customers" || log.entityName === "customer_messages"
-        ? "khách hàng"
-        : "dữ liệu";
+  const kinds: Record<string, string> = {
+    users: "tài khoản",
+    customers: "khách hàng",
+    customer_messages: "khách hàng",
+    bookings: "đơn",
+    departure_schedules: "chuyến",
+    emails: "email",
+    debts: "công nợ",
+    customer_requests: "yêu cầu",
+  };
+  const kind = kinds[log.entityName] || "dữ liệu";
   return name ? `${kind} ${name}` : kind;
 }
 
@@ -219,20 +272,77 @@ function describeAudit(log: AuditLog) {
   const reason = newData?.reason as string | undefined;
 
   if (log.action.endsWith("_DENIED")) {
-    return `Cố thay đổi ${target} — đã bị chặn`;
+    const base = auditText(log.action.replace(/_DENIED$/, ""), target, log, oldData, newData);
+    return `Cố ${lowerFirst(base)} — bị chặn`;
   }
 
-  switch (log.action) {
+  return auditText(log.action, target, log, oldData, newData);
+}
+
+// Câu mô tả hành động "thay đổi" của Admin, Nhân viên, HDV và Khách hàng
+function auditText(action: string, target: string, log: AuditLog, oldData: Json | null, newData: Json | null) {
+  const reason = newData?.reason as string | undefined;
+
+  switch (action) {
+    case "CONFIRM_BOOKING":
+      return `Xác nhận ${target}`;
+    case "REFUND_BOOKING":
+      return `Hoàn tiền ${target}`;
+    case "RECORD_PAYMENT":
+      return `Ghi nhận thanh toán cho ${target}`;
+    case "SEND_EMAIL":
+      return `Gửi email cho ${target}`;
+    case "RESEND_EMAIL":
+      return "Gửi lại email cho khách";
+    case "SEND_DEBT_REMINDER":
+      return "Gửi nhắc nhở công nợ cho khách";
+    case "PROCESS_REQUEST":
+      return "Xử lý yêu cầu của khách";
+    case "UPDATE_STATUS":
+      return `Cập nhật trạng thái ${target}`;
+    case "CREATE_INCIDENT":
+      return `Báo cáo sự cố trong ${target}`;
+    case "SUBMIT_REPORT":
+      return `Gửi báo cáo ${target}`;
+    case "SAVE_REPORT_DRAFT":
+      return `Lưu nháp báo cáo ${target}`;
+    case "CREATE_ITINERARY_NOTE":
+      return `Thêm ghi chú lịch trình ${target}`;
+    case "UPDATE_AVATAR":
+      return "Cập nhật ảnh đại diện";
+    case "UPDATE_PROFILE":
+      return "Cập nhật hồ sơ cá nhân";
+    case "GRANT_CONSENT":
+      return `Cho phép hướng dẫn viên xem số điện thoại (${target})`;
+    case "REVOKE_CONSENT":
+      return `Thu hồi quyền hướng dẫn viên xem số điện thoại (${target})`;
+    case "DENY_CONSENT":
+      return `Không cho hướng dẫn viên xem số điện thoại (${target})`;
+    case "VIEW_CONSENT":
+      return `Xem cài đặt quyền riêng tư của ${target}`;
+    case "CHANGE_CONSENT":
+      return `Thay đổi cài đặt quyền riêng tư của ${target}`;
+  }
+
+  switch (action) {
     case "LOGIN_SUCCESS":
       return "Đăng nhập thành công";
-    case "LOGIN_FAILED":
+    case "LOGIN_FAILED": {
+      const attempt = newData?.attempt ? ` (lần ${newData.attempt}/5)` : "";
       if (reason === "ACCOUNT_NOT_FOUND") {
         const account = (newData?.email || newData?.phone) as string | undefined;
-        return `Đăng nhập bằng tài khoản không tồn tại${account ? ` (${account})` : ""}`;
+        return `Đăng nhập bằng tên đăng nhập không tồn tại${account ? ` ${account}` : ""}${attempt}`;
       }
-      return "Đăng nhập thất bại — sai mật khẩu";
+      return `Đăng nhập thất bại — sai mật khẩu${attempt}`;
+    }
+    case "LOGIN_LOCKOUT": {
+      const account = (newData?.email || newData?.phone) as string | undefined;
+      return `Tạm khóa đăng nhập 60 phút do nhập sai 5 lần${account ? ` (${account})` : ""}`;
+    }
     case "LOGIN_BLOCKED":
-      return "Đăng nhập khi tài khoản đang bị khóa";
+      return reason === "TEMP_LOCKED"
+        ? "Cố đăng nhập khi đang bị tạm khóa (nhập sai quá 5 lần) — bị chặn"
+        : "Đăng nhập khi tài khoản đang bị khóa — bị chặn";
     case "VIEW_LOGS":
       return log.entityName === "audit_logs"
         ? "Mở nhật ký thao tác hệ thống"
@@ -257,7 +367,13 @@ function describeAudit(log: AuditLog) {
 }
 
 function auditTone(action: string): Tone {
-  if (action === "LOGIN_FAILED" || action === "LOGIN_BLOCKED" || action.endsWith("_DENIED")) {
+  action = action || "";
+  if (
+    action === "LOGIN_FAILED" ||
+    action === "LOGIN_BLOCKED" ||
+    action === "LOGIN_LOCKOUT" ||
+    action.endsWith("_DENIED")
+  ) {
     return "denied";
   }
   if (SENSITIVE.includes(action)) return "sensitive";
@@ -265,6 +381,8 @@ function auditTone(action: string): Tone {
 }
 
 function auditBadge(action: string) {
+  action = action || "";
+  if (action === "LOGIN_LOCKOUT") return { text: "Khóa tạm 60 phút", cls: "bg-red-600 text-white" };
   if (action.endsWith("_DENIED")) return { text: "Bị chặn", cls: "bg-red-100 text-red-700" };
   if (action === "LOGIN_FAILED" || action === "LOGIN_BLOCKED") {
     return { text: "Đăng nhập lỗi", cls: "bg-red-100 text-red-700" };
@@ -307,6 +425,49 @@ function DetailItem({ label, value }: { label: string; value: string }) {
     <div>
       <p className="text-xs font-semibold uppercase tracking-wide text-[#6e797b]">{label}</p>
       <p className="mt-0.5 text-[15px] text-[#181c1d]">{value}</p>
+    </div>
+  );
+}
+
+function OwnersTable({ owners, denied }: { owners: OwnerInfo[]; denied: boolean }) {
+  if (!owners.length) {
+    return (
+      <p className="text-[15px] text-[#3e494b]">
+        {denied ? "Không có dữ liệu nào được trả về vì truy cập đã bị chặn." : "Không có thông tin chủ dữ liệu."}
+      </p>
+    );
+  }
+
+  return (
+    <div className="overflow-x-auto rounded-2xl border border-[#e3eaeb] bg-white">
+      <p className="px-4 pt-3 text-sm font-semibold text-[#181c1d]">
+        {denied ? "Dữ liệu đã cố truy cập" : "Dữ liệu đã được xem"} · {owners.length} người
+      </p>
+      <table className="mt-2 w-full text-[15px]">
+        <thead className="bg-[#f1f4f5] text-left text-sm text-[#3e494b]">
+          <tr>
+            <th className="px-4 py-2 font-semibold">Họ tên</th>
+            <th className="px-4 py-2 font-semibold">Loại</th>
+            <th className="px-4 py-2 font-semibold">Mã khách hàng</th>
+            <th className="px-4 py-2 font-semibold">Số điện thoại</th>
+            <th className="px-4 py-2 font-semibold">Email</th>
+          </tr>
+        </thead>
+        <tbody>
+          {owners.map((owner, index) => (
+            <tr key={index} className="border-t border-[#eef2f3]">
+              <td className="px-4 py-2 font-medium">{owner.name}</td>
+              <td className="px-4 py-2 text-[#3e494b]">{ROLE_LABEL[owner.type] || owner.type || "—"}</td>
+              <td className="px-4 py-2 tabular-nums text-[#3e494b]">{owner.code || "—"}</td>
+              <td className="px-4 py-2 tabular-nums text-[#3e494b]">{owner.phone || "—"}</td>
+              <td className="px-4 py-2 text-[#3e494b]">{owner.email || "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="px-4 py-2 text-xs text-[#6e797b]">
+        Số điện thoại và email được che bớt: trang nhật ký chỉ cần nhận ra đúng người, không hiển thị đầy đủ thông tin liên lạc.
+      </p>
     </div>
   );
 }
@@ -362,6 +523,7 @@ export default function AdminPrivacyLogs() {
   const [keyword, setKeyword] = useState("");
   const [result, setResult] = useState("");
   const [action, setAction] = useState("");
+  const [role, setRole] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [page, setPage] = useState(1);
@@ -383,6 +545,7 @@ export default function AdminPrivacyLogs() {
     if (keyword.trim()) params.set("q", keyword.trim());
     if (type === "access" && result) params.set("result", result);
     if (type === "audit" && action) params.set("action", action);
+    if (role) params.set("role", role);
     if (from) params.set("from", from);
     if (to) params.set("to", to);
 
@@ -394,6 +557,8 @@ export default function AdminPrivacyLogs() {
       });
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.message || "Không thể tải nhật ký");
+      // Kết quả của tab cũ về chậm sau khi đã chuyển tab: bỏ qua
+      if (json.data.type !== type) return;
 
       setItems(json.data.items);
       setTotal(json.data.total);
@@ -405,7 +570,7 @@ export default function AdminPrivacyLogs() {
     } finally {
       setLoading(false);
     }
-  }, [type, page, keyword, result, action, from, to]);
+  }, [type, page, keyword, result, action, role, from, to]);
 
   useEffect(() => {
     const timer = setTimeout(load, 300);
@@ -484,6 +649,11 @@ export default function AdminPrivacyLogs() {
             <button
               key={value}
               onClick={() => {
+                if (value === type) return;
+                // Xóa dữ liệu của tab cũ để không hiển thị nhầm kiểu dòng trong lúc tải tab mới
+                setItems([]);
+                setTotal(0);
+                setLoading(true);
                 setType(value);
                 resetPage();
               }}
@@ -528,6 +698,14 @@ export default function AdminPrivacyLogs() {
               ))}
             </select>
           )}
+
+          <select value={role} onChange={(e) => { setRole(e.target.value); resetPage(); }} className={inputCls}>
+            <option value="">Vai trò: Tất cả</option>
+            <option value="ADMIN">Quản trị viên</option>
+            <option value="STAFF">Nhân viên</option>
+            <option value="GUIDE">Hướng dẫn viên</option>
+            <option value="CUSTOMER">Khách hàng</option>
+          </select>
 
           <label className="flex items-center gap-2 text-sm text-[#3e494b]">
             Từ ngày
@@ -590,6 +768,8 @@ export default function AdminPrivacyLogs() {
 
             {items.map((item) => {
               const isAccess = type === "access";
+              // Bỏ qua dòng không đúng kiểu của tab đang xem (phòng dữ liệu tab cũ còn sót)
+              if (isAccess !== "dataType" in item) return null;
               const access = item as AccessLog;
               const audit = item as AuditLog;
               const tone: Tone = isAccess
@@ -604,7 +784,10 @@ export default function AdminPrivacyLogs() {
               const newData = isAccess ? null : parseJson(audit.newData);
               const hasChanges =
                 !isAccess &&
-                ["CREATE", "UPDATE", "DELETE", "CHANGE_ROLE", "LOCK", "UNLOCK"].includes(audit.action) &&
+                [
+                  "CREATE", "UPDATE", "DELETE", "CHANGE_ROLE", "LOCK", "UNLOCK",
+                  "CONFIRM_BOOKING", "REFUND_BOOKING", "RECORD_PAYMENT", "UPDATE_STATUS",
+                ].includes(audit.action) &&
                 (oldData || newData);
 
               return (
@@ -668,7 +851,7 @@ export default function AdminPrivacyLogs() {
                     <tr className={ROW_BG[tone]}>
                     <td colSpan={5} className={`border-l-[5px] px-5 pb-5 pt-1 ${ROW_STRIPE[tone]}`}>
                     <div className="space-y-4 rounded-2xl border border-[#e3eaeb] bg-white/80 p-4">
-                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                         <DetailItem label="Thời điểm" value={`${time} ngày ${date}`} />
                         {isAccess ? (
                           <>
@@ -680,7 +863,12 @@ export default function AdminPrivacyLogs() {
                                   : PURPOSE_LABEL[access.purpose || ""] || access.purpose || "—"
                               }
                             />
-                            <DetailItem label="Chủ dữ liệu" value={access.ownerName || "Không xác định"} />
+                            {access.tourName && (
+                              <DetailItem
+                                label="Chuyến đi"
+                                value={`${access.tourName}${access.departureCode ? ` (${access.departureCode})` : ""}`}
+                              />
+                            )}
                           </>
                         ) : (
                           (newData?.reason as string | undefined) && (
@@ -690,8 +878,8 @@ export default function AdminPrivacyLogs() {
                             />
                           )
                         )}
-                        <DetailItem label="Máy truy cập (địa chỉ IP)" value={friendlyIp(item.ipAddress)} />
                       </div>
+                      {isAccess && <OwnersTable owners={access.owners} denied={access.result === "DENIED"} />}
                       {hasChanges && <ChangeTable oldData={oldData} newData={newData} />}
                     </div>
                     </td>
