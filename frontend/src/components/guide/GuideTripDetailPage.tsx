@@ -4,14 +4,21 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import GuideShell from "@/components/guide/GuideShell";
 import {
+  clearAuthStorage,
   createGuideIncidentApi,
   getGuideMeApi,
   getGuideTripDetailApi,
+  isForbiddenError,
+  isNotFoundError,
+  isUnauthorizedError,
+  MISSING_PASSENGER_INFO_MESSAGE,
+  UNSHARED_PHONE_MESSAGE,
   updateGuideTripStatusApi,
   type GuideActivity,
   type GuideMe,
   type GuideOperationLog,
   type GuidePassenger,
+  type GuidePassengerAccessInfo,
   type GuideTripDetail,
 } from "@/lib/api/guide.api";
 
@@ -64,7 +71,7 @@ function passengerTypeText(type?: string | null) {
 }
 
 function getInitials(name?: string | null) {
-  if (!name) return "?";
+  if (!name || name === MISSING_PASSENGER_INFO_MESSAGE) return "?";
 
   return name
     .split(" ")
@@ -103,6 +110,7 @@ export default function GuideTripDetailPage() {
     try {
       setLoading(true);
       setErrorMessage("");
+      setData(null);
 
       const [guideData, detailData] = await Promise.all([
         getGuideMeApi(),
@@ -113,13 +121,34 @@ export default function GuideTripDetailPage() {
       setData(detailData);
       setOperationStatus(detailData.assignment.operationStatus || "PREPARING");
     } catch (error) {
+      setData(null);
+
+      if (isUnauthorizedError(error)) {
+        clearAuthStorage();
+        router.replace("/login");
+        return;
+      }
+
+      if (isForbiddenError(error)) {
+        setErrorMessage(
+          error instanceof Error
+            ? error.message
+            : "Bạn không có quyền truy cập chuyến đi này."
+        );
+        return;
+      }
+
+      if (isNotFoundError(error)) {
+        setErrorMessage("Không tìm thấy chuyến đi được phân công.");
+        return;
+      }
+
       const message =
         error instanceof Error
           ? error.message
           : "Không thể tải chi tiết chuyến đi";
 
       setErrorMessage(message);
-      setData(null);
     } finally {
       setLoading(false);
     }
@@ -153,12 +182,18 @@ export default function GuideTripDetailPage() {
     return data?.logs.filter((log) => log.logType === "STATUS") || [];
   }, [data]);
 
-  const specialPassengers = useMemo(() => {
-    return (
-      data?.passengers.filter(
-        (p) => p.mealNote || p.healthNote || p.roomPreference
-      ) || []
-    );
+  const sharedPhoneCount = useMemo(() => {
+    if (!data) return 0;
+    const accessAllowed =
+      data.passengerAccess?.allowed !== undefined
+        ? data.passengerAccess.allowed
+        : data.assignment.passengerAccessAllowed !== false;
+    if (!accessAllowed) return 0;
+    return data.passengers.filter(
+      (p) =>
+        (p.phoneShared && Boolean(p.phone)) ||
+        (p.isBookingContact && p.contactPhoneShared && Boolean(p.contactPhone))
+    ).length;
   }, [data]);
 
   async function handleUpdateStatus() {
@@ -174,6 +209,11 @@ export default function GuideTripDetailPage() {
       await loadData();
       alert("Cập nhật tình trạng chuyến đi thành công.");
     } catch (error) {
+      if (isUnauthorizedError(error)) {
+        clearAuthStorage();
+        router.replace("/login");
+        return;
+      }
       alert(error instanceof Error ? error.message : "Không thể cập nhật.");
     } finally {
       setUpdatingStatus(false);
@@ -205,6 +245,11 @@ export default function GuideTripDetailPage() {
       setActiveTab("REPORTS");
       alert("Đã gửi báo cáo vấn đề phát sinh.");
     } catch (error) {
+      if (isUnauthorizedError(error)) {
+        clearAuthStorage();
+        router.replace("/login");
+        return;
+      }
       alert(error instanceof Error ? error.message : "Không thể gửi báo cáo.");
     } finally {
       setSendingIncident(false);
@@ -372,7 +417,11 @@ export default function GuideTripDetailPage() {
                 activityMap={activityMap}
               />
             ) : activeTab === "PASSENGERS" ? (
-              <PassengerPanel passengers={passengers} />
+              <PassengerPanel
+                passengers={passengers}
+                assignment={assignment}
+                passengerAccess={data.passengerAccess}
+              />
             ) : activeTab === "PICKUPS" ? (
               <PickupPanel pickupPoints={pickupPoints} />
             ) : (
@@ -412,8 +461,8 @@ export default function GuideTripDetailPage() {
               <div className="grid grid-cols-2 gap-3">
                 <StatBox label="Hành khách" value={String(passengers.length)} />
                 <StatBox
-                  label="Đặc biệt"
-                  value={String(specialPassengers.length)}
+                  label="SĐT chia sẻ"
+                  value={String(sharedPhoneCount)}
                   orange
                 />
                 <StatBox label="Điểm đón" value={String(pickupPoints.length)} />
@@ -422,31 +471,45 @@ export default function GuideTripDetailPage() {
             </section>
 
             <section className="rounded-[32px] border border-[#dfe8ea] bg-white p-6 shadow-sm">
-              <h2 className="mb-5 text-xl font-black text-[#00606c]">
-                Khách cần lưu ý
+              <h2 className="mb-4 text-xl font-black text-[#00606c]">
+                Quyền truy cập dữ liệu khách
               </h2>
 
-              {specialPassengers.length === 0 ? (
-                <p className="rounded-2xl bg-[#f7fbfc] p-4 text-sm font-semibold text-[#6e797b]">
-                  Chưa có yêu cầu đặc biệt.
-                </p>
-              ) : (
-                <div className="space-y-3">
-                  {specialPassengers.slice(0, 4).map((p) => (
-                    <div
-                      key={p.id}
-                      className="rounded-2xl border border-[#ffdcb8] bg-[#fff7ed] p-4"
-                    >
-                      <p className="font-black text-[#172124]">{p.fullName}</p>
-                      <p className="mt-1 text-sm font-semibold text-[#9b4500]">
-                        {[p.mealNote, p.healthNote, p.roomPreference]
-                          .filter(Boolean)
-                          .join(" • ")}
-                      </p>
-                    </div>
-                  ))}
+              <div className="rounded-2xl bg-[#f7fbfc] p-4 text-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-bold text-[#536163]">Trạng thái:</span>
+                  {(data.passengerAccess?.allowed ??
+                    assignment.passengerAccessAllowed) === false ? (
+                    <span className="rounded-full bg-[#fff0ef] px-3 py-1 text-xs font-black text-[#ba1a1a]">
+                      Ngoài thời hạn xem
+                    </span>
+                  ) : (
+                    <span className="rounded-full bg-[#e6f9ed] px-3 py-1 text-xs font-black text-[#0e6b38]">
+                      Đang trong thời hạn
+                    </span>
+                  )}
                 </div>
-              )}
+
+                <p className="mt-3 font-semibold leading-6 text-[#536163]">
+                  Khung giờ cho phép:{" "}
+                  <span className="font-black text-[#172124]">
+                    {formatDate(
+                      data.passengerAccess?.allowedFrom || assignment.allowedFrom
+                    )}{" "}
+                    –{" "}
+                    {formatDate(
+                      data.passengerAccess?.allowedUntil ||
+                      assignment.allowedUntil
+                    )}
+                  </span>
+                </p>
+
+                <p className="mt-2 text-xs font-semibold leading-5 text-[#6e797b]">
+                  {data.passengerAccess?.message ||
+                    assignment.passengerAccessMessage ||
+                    "Chỉ hiển thị họ tên, loại khách và số điện thoại khi khách đồng ý chia sẻ trong thời gian thực hiện nhiệm vụ."}
+                </p>
+              </div>
             </section>
 
             <section className="rounded-[32px] border border-[#dfe8ea] bg-white p-6 shadow-sm">
@@ -552,10 +615,55 @@ function ItineraryPanel({
   );
 }
 
-function PassengerPanel({ passengers }: { passengers: GuidePassenger[] }) {
+function PassengerPanel({
+  passengers,
+  assignment,
+  passengerAccess,
+}: {
+  passengers: GuidePassenger[];
+  assignment: GuideTripDetail["assignment"];
+  passengerAccess?: GuidePassengerAccessInfo;
+}) {
+  const accessAllowed =
+    passengerAccess?.allowed !== undefined
+      ? passengerAccess.allowed
+      : assignment.passengerAccessAllowed !== false;
+
+  if (!accessAllowed) {
+    const message =
+      passengerAccess?.message ||
+      assignment.passengerAccessMessage ||
+      "Chỉ được xem danh sách khách trong khoảng 3 ngày trước ngày khởi hành đến 1 ngày sau ngày kết thúc chuyến.";
+    const allowedFrom = passengerAccess?.allowedFrom || assignment.allowedFrom;
+    const allowedUntil =
+      passengerAccess?.allowedUntil || assignment.allowedUntil;
+
+    return (
+      <section className="rounded-[26px] border border-[#ffdcb8] bg-[#fff7ed] p-6 text-left">
+        <h2 className="text-lg font-black text-[#9b4500]">
+          Danh sách hành khách đang bị giới hạn theo chính sách bảo mật
+        </h2>
+        <p className="mt-2 text-sm font-semibold leading-6 text-[#536163]">
+          {message}
+        </p>
+        <p className="mt-3 text-xs font-black uppercase tracking-[0.14em] text-[#00606c]">
+          Thời hạn cho phép: {formatDate(allowedFrom)} –{" "}
+          {formatDate(allowedUntil)}
+        </p>
+      </section>
+    );
+  }
+
   if (passengers.length === 0) {
     return <EmptyState text="Chưa có danh sách hành khách." />;
   }
+
+  const registeredCount = passengers.filter(
+    (passenger) =>
+      passenger.hasPassengerInfo !== false &&
+      passenger.fullName !== MISSING_PASSENGER_INFO_MESSAGE,
+  ).length;
+  const missingCount = Math.max(0, passengers.length - registeredCount);
 
   return (
     <section>
@@ -567,63 +675,74 @@ function PassengerPanel({ passengers }: { passengers: GuidePassenger[] }) {
 
         <span className="rounded-full bg-[#ddf9ff] px-3 py-1 text-xs font-black text-[#00606c]">
           {passengers.length} khách
+          {missingCount > 0
+            ? ` (${registeredCount} đã có hồ sơ • ${missingCount} chưa có thông tin)`
+            : ""}
         </span>
       </div>
 
       <div className="space-y-4">
-        {passengers.map((passenger) => (
-          <div
-            key={passenger.id}
-            className="rounded-[24px] border-l-4 border-[#00606c] bg-[#f7fbfc] p-5 shadow-sm"
-          >
-            <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
-              <div className="flex gap-4">
-                <div className="flex h-13 w-13 items-center justify-center rounded-full bg-[#ddf9ff] text-base font-black text-[#00606c]">
-                  {getInitials(passenger.fullName)}
-                </div>
+        {passengers.map((passenger) => {
+          const isMissingInfo =
+            passenger.hasPassengerInfo === false ||
+            passenger.fullName === MISSING_PASSENGER_INFO_MESSAGE;
+          const passengerPhone =
+            passenger.phoneShared && passenger.phone
+              ? passenger.phone
+              : UNSHARED_PHONE_MESSAGE;
+          const bookingContactPhone =
+            passenger.contactPhoneShared && passenger.contactPhone
+              ? passenger.contactPhone
+              : UNSHARED_PHONE_MESSAGE;
 
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="text-lg font-black text-[#172124]">
-                      {passenger.fullName}
-                    </h3>
-
-                    {passenger.isBookingContact ? (
-                      <span className="rounded-full bg-[#9defff] px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-[#001f24]">
-                        Liên hệ chính
-                      </span>
-                    ) : null}
+          return (
+            <div
+              key={passenger.id}
+              className="rounded-[24px] border-l-4 border-[#00606c] bg-[#f7fbfc] p-5 shadow-sm"
+            >
+              <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
+                <div className="flex gap-4">
+                  <div className="flex h-13 w-13 items-center justify-center rounded-full bg-[#ddf9ff] text-base font-black text-[#00606c]">
+                    {getInitials(passenger.fullName)}
                   </div>
 
-                  <p className="mt-1 text-sm font-semibold text-[#6e797b]">
-  {passengerTypeText(passenger.passengerType)}
-  {passenger.bookingCode ? ` • Booking ${passenger.bookingCode}` : ""}
-</p>
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="text-lg font-black text-[#172124]">
+                        {passenger.fullName || MISSING_PASSENGER_INFO_MESSAGE}
+                      </h3>
+
+                      {isMissingInfo ? (
+                        <span className="rounded-full bg-[#fff1df] px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-[#9b4500]">
+                          Chưa có hồ sơ khách
+                        </span>
+                      ) : null}
+
+                      {passenger.isBookingContact ? (
+                        <span className="rounded-full bg-[#9defff] px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-[#001f24]">
+                          Liên hệ chính
+                        </span>
+                      ) : null}
+                    </div>
+
+                    <p className="mt-1 text-sm font-semibold text-[#6e797b]">
+                      {passengerTypeText(passenger.passengerType)}
+                      {passenger.bookingCode
+                        ? ` • Booking ${passenger.bookingCode}`
+                        : ""}
+                    </p>
+                  </div>
                 </div>
               </div>
 
-              {(passenger.mealNote ||
-                passenger.healthNote ||
-                passenger.roomPreference) && (
-                <span className="w-fit rounded-full bg-[#fff0ef] px-3 py-1.5 text-xs font-black text-[#ba1a1a]">
-                  Có lưu ý đặc biệt
-                </span>
-              )}
+              <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-3">
+                <InfoLine label="Số điện thoại" value={passengerPhone} />
+                <InfoLine label="Người đặt chỗ" value={passenger.contactName} />
+                <InfoLine label="SĐT người đặt" value={bookingContactPhone} />
+              </div>
             </div>
-
-            <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-3">
-              <InfoLine label="Số điện thoại" value={passenger.phone} />
-              <InfoLine label="Email" value={passenger.email} />
-              <InfoLine
-                label="Giấy tờ"
-                value={passenger.idNumber || passenger.passportNumber}
-              />
-              <InfoLine label="Ăn uống" value={passenger.mealNote} />
-              <InfoLine label="Sức khỏe" value={passenger.healthNote} />
-              <InfoLine label="Phòng" value={passenger.roomPreference} />
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </section>
   );
@@ -851,9 +970,8 @@ function QuickActionCard({
     <button
       type="button"
       onClick={onClick}
-      className={`flex items-center justify-between rounded-[28px] p-6 text-left shadow-sm transition hover:scale-[1.01] ${
-        isDanger ? "bg-[#9b4500]" : "bg-[#00606c]"
-      }`}
+      className={`flex items-center justify-between rounded-[28px] p-6 text-left shadow-sm transition hover:scale-[1.01] ${isDanger ? "bg-[#9b4500]" : "bg-[#00606c]"
+        }`}
     >
       <div>
         <p className="text-xs font-black uppercase tracking-[0.18em] !text-white/70">
@@ -894,9 +1012,8 @@ function StatBox({
         {label}
       </p>
       <p
-        className={`mt-1 text-3xl font-black ${
-          orange ? "text-[#9b4500]" : "text-[#00606c]"
-        }`}
+        className={`mt-1 text-3xl font-black ${orange ? "text-[#9b4500]" : "text-[#00606c]"
+          }`}
       >
         {value}
       </p>

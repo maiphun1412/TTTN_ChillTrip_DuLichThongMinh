@@ -46,6 +46,17 @@ export type GuideTrip = {
   passengerCount: number;
 };
 
+export const UNSHARED_PHONE_MESSAGE = "Chưa được khách đồng ý chia sẻ";
+export const MISSING_PASSENGER_INFO_MESSAGE = "Chưa có thông tin hành khách";
+
+export type GuidePassengerAccessInfo = {
+  allowed: boolean;
+  code?: string | null;
+  message?: string | null;
+  allowedFrom?: string | null;
+  allowedUntil?: string | null;
+};
+
 export type GuidePassenger = {
   id: string;
   bookingId?: string;
@@ -54,25 +65,15 @@ export type GuidePassenger = {
 
   passengerType?: string | null;
   fullName?: string | null;
-  gender?: string | null;
-  dateOfBirth?: string | null;
+  hasPassengerInfo?: boolean;
   phone?: string | null;
-  email?: string | null;
-  idNumber?: string | null;
-  passportNumber?: string | null;
-  nationality?: string | null;
-
-  emergencyContactName?: string | null;
-  emergencyContactPhone?: string | null;
-  mealNote?: string | null;
-  healthNote?: string | null;
-  roomPreference?: string | null;
+  phoneShared?: boolean;
+  phoneConsentStatus?: string | null;
   isBookingContact?: boolean;
 
   contactName?: string | null;
   contactPhone?: string | null;
-  contactEmail?: string | null;
-  specialNotes?: string | null;
+  contactPhoneShared?: boolean;
 };
 
 export type GuidePickupPoint = {
@@ -120,7 +121,14 @@ export type GuideTripDetail = {
     includedServices?: string | null;
     excludedServices?: string | null;
     operationNotes?: string | null;
+    registeredPassengerCount?: number;
+    passengerAccessAllowed?: boolean;
+    passengerAccessCode?: string | null;
+    passengerAccessMessage?: string | null;
+    allowedFrom?: string | null;
+    allowedUntil?: string | null;
   };
+  passengerAccess?: GuidePassengerAccessInfo;
   passengers: GuidePassenger[];
   pickupPoints: GuidePickupPoint[];
   itineraryDays: GuideItineraryDay[];
@@ -187,11 +195,11 @@ export type GuidePassengerBooking = {
   bookingCode: string;
   bookingStatus: string;
   contactName: string;
-  contactPhone: string;
-  contactEmail?: string | null;
+  contactPhone?: string | null;
+  contactPhoneShared?: boolean;
+  phoneConsentStatus?: string | null;
   adultCount: number;
   childCount: number;
-  specialNotes?: string | null;
 
   pickupName?: string | null;
   pickupAddress?: string | null;
@@ -217,6 +225,13 @@ export type GuidePassengerTrip = {
 
   bookingCount: number;
   passengerCount: number;
+  registeredPassengerCount?: number;
+
+  passengerAccessAllowed?: boolean;
+  passengerAccessCode?: string | null;
+  passengerAccessMessage?: string | null;
+  allowedFrom?: string | null;
+  allowedUntil?: string | null;
 
   bookings: GuidePassengerBooking[];
 };
@@ -226,12 +241,11 @@ export type GuidePickupBooking = {
   bookingCode: string;
   bookingStatus: string;
   contactName: string;
-  contactPhone: string;
-  contactEmail?: string | null;
+  contactPhone?: string | null;
+  contactPhoneShared?: boolean;
   adultCount: number;
   childCount: number;
   passengerCount: number;
-  specialNotes?: string | null;
 };
 
 export type GuidePickupGroup = {
@@ -307,6 +321,38 @@ export type CreateGuideScheduleNotePayload = {
   content: string;
 };
 
+export class GuideApiError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "GuideApiError";
+    this.status = status;
+  }
+}
+
+export function isUnauthorizedError(error: unknown): boolean {
+  if (error instanceof GuideApiError && error.status === 401) return true;
+  if (error instanceof Error && error.message === "Chưa đăng nhập") return true;
+  return false;
+}
+
+export function isForbiddenError(error: unknown): boolean {
+  return error instanceof GuideApiError && error.status === 403;
+}
+
+export function isNotFoundError(error: unknown): boolean {
+  return error instanceof GuideApiError && error.status === 404;
+}
+
+export function clearAuthStorage() {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem("access_token");
+  localStorage.removeItem("user");
+  sessionStorage.removeItem("access_token");
+  sessionStorage.removeItem("user");
+}
+
 function getToken() {
   if (typeof window === "undefined") return "";
 
@@ -321,7 +367,7 @@ async function requestApi<T>(url: string, options?: RequestInit): Promise<T> {
   const token = getToken();
 
   if (!token) {
-    throw new Error("Chưa đăng nhập");
+    throw new GuideApiError("Chưa đăng nhập", 401);
   }
 
   const headers: HeadersInit = {
@@ -336,10 +382,13 @@ async function requestApi<T>(url: string, options?: RequestInit): Promise<T> {
     cache: "no-store",
   });
 
-  const json = await res.json();
+  const json = await res.json().catch(() => null);
 
-  if (!res.ok || !json.success) {
-    throw new Error(json.message || "Có lỗi xảy ra");
+  if (!res.ok || !json?.success) {
+    throw new GuideApiError(
+      json?.message || "Có lỗi xảy ra",
+      res.status || 500
+    );
   }
 
   return json.data;

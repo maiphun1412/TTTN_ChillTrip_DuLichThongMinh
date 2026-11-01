@@ -53,7 +53,7 @@ function destinationText(trip: GuideScheduleTrip) {
 }
 
 export default function GuideSchedulePage() {
-    const router = useRouter();
+  const router = useRouter();
   const [guide, setGuide] = useState<GuideMe | null>(null);
   const [trips, setTrips] = useState<GuideScheduleTrip[]>([]);
   const [selectedId, setSelectedId] = useState("");
@@ -101,7 +101,7 @@ export default function GuideSchedulePage() {
 
   const filteredTrips = useMemo(() => {
     const search = keyword.trim().toLowerCase();
-    
+
 
     return trips.filter((trip) => {
       if (filter === "TODAY" && !isTodayInTrip(trip)) return false;
@@ -182,7 +182,7 @@ export default function GuideSchedulePage() {
       setSavingNote(false);
     }
   }
-   function handleOpenTripDetail() {
+  function handleOpenTripDetail() {
     if (!selectedTrip?.assignmentId) {
       alert("Không tìm thấy ID phân công của chuyến này.");
       return;
@@ -190,14 +190,14 @@ export default function GuideSchedulePage() {
 
     router.push(`/guide/trips/${selectedTrip.assignmentId}`);
     <button
-  type="button"
-  onClick={() =>
-    router.push(`/guide/reports?assignmentId=${selectedTrip.assignmentId}`)
-  }
-  className="rounded-full bg-[#9b4500] px-6 py-3 text-sm font-black !text-white"
->
-  Viết báo cáo sau chuyến
-</button>
+      type="button"
+      onClick={() =>
+        router.push(`/guide/reports?assignmentId=${selectedTrip.assignmentId}`)
+      }
+      className="rounded-full bg-[#9b4500] px-6 py-3 text-sm font-black !text-white"
+    >
+      Viết báo cáo sau chuyến
+    </button>
   }
 
   return (
@@ -215,7 +215,7 @@ export default function GuideSchedulePage() {
               </h1>
 
               <p className="mt-4 max-w-3xl text-sm font-semibold leading-7 text-[#6e797b] md:text-base">
-                Theo dõi từng ngày trong hành trình, xem hoạt động theo giờ và
+                Theo dõi từng ngày trong hành trình, xem hoạt động và
                 ghi chú nhanh những điểm cần lưu ý khi dẫn đoàn.
               </p>
 
@@ -239,8 +239,8 @@ export default function GuideSchedulePage() {
               <p className="mt-3 text-sm font-semibold leading-6 !text-white/75">
                 {selectedTrip
                   ? `${formatDate(selectedTrip.startDate)} - ${formatDate(
-                      selectedTrip.endDate
-                    )}`
+                    selectedTrip.endDate
+                  )}`
                   : "Chưa có lịch trình để hiển thị."}
               </p>
 
@@ -314,11 +314,10 @@ export default function GuideSchedulePage() {
                     setActiveDayId(trip.itineraryDays[0]?.id || "");
                     setNote("");
                   }}
-                  className={`w-full rounded-[28px] border p-4 text-left transition ${
-                    selectedTrip?.assignmentId === trip.assignmentId
+                  className={`w-full rounded-[28px] border p-4 text-left transition ${selectedTrip?.assignmentId === trip.assignmentId
                       ? "border-[#00606c] bg-[#effbfc] shadow-md"
                       : "border-[#dfe8ea] bg-white hover:bg-[#f7fbfc]"
-                  }`}
+                    }`}
                 >
                   <div className="flex gap-4">
                     <div className="h-24 w-24 flex-shrink-0 overflow-hidden rounded-[22px] bg-[#e5e9ea]">
@@ -394,39 +393,39 @@ export default function GuideSchedulePage() {
                       <InfoBox label="Booking" value={String(selectedTrip.bookingCount)} />
                     </div>
 
-                    
+
                   </section>
 
                   <section>
                     <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-  <div className="flex flex-wrap gap-2">
-    {selectedTrip.itineraryDays.map((day) => (
-      <button
-        key={day.id}
-        type="button"
-        onClick={() => {
-          setActiveDayId(day.id);
-          setNote("");
-        }}
-        className={
-          activeDay?.id === day.id
-            ? "rounded-full bg-[#00606c] px-5 py-3 text-sm font-black !text-white"
-            : "rounded-full bg-[#f1f4f5] px-5 py-3 text-sm font-black text-[#3e494b] hover:bg-[#e5e9ea]"
-        }
-      >
-        Ngày {day.dayNo}
-      </button>
-    ))}
-  </div>
+                      <div className="flex flex-wrap gap-2">
+                        {selectedTrip.itineraryDays.map((day) => (
+                          <button
+                            key={day.id}
+                            type="button"
+                            onClick={() => {
+                              setActiveDayId(day.id);
+                              setNote("");
+                            }}
+                            className={
+                              activeDay?.id === day.id
+                                ? "rounded-full bg-[#00606c] px-5 py-3 text-sm font-black !text-white"
+                                : "rounded-full bg-[#f1f4f5] px-5 py-3 text-sm font-black text-[#3e494b] hover:bg-[#e5e9ea]"
+                            }
+                          >
+                            Ngày {day.dayNo}
+                          </button>
+                        ))}
+                      </div>
 
-  <button
-    type="button"
-    onClick={handleOpenTripDetail}
-    className="w-fit rounded-full bg-[#00606c] px-6 py-3 text-sm font-black !text-white shadow-[0_12px_24px_rgba(0,96,108,0.18)] transition hover:bg-[#007b8a] active:scale-95"
-  >
-    Xem chi tiết tour
-  </button>
-</div>
+                      <button
+                        type="button"
+                        onClick={handleOpenTripDetail}
+                        className="w-fit rounded-full bg-[#00606c] px-6 py-3 text-sm font-black !text-white shadow-[0_12px_24px_rgba(0,96,108,0.18)] transition hover:bg-[#007b8a] active:scale-95"
+                      >
+                        Xem chi tiết tour
+                      </button>
+                    </div>
 
                     {activeDay ? (
                       <DayTimeline day={activeDay} />
