@@ -1,7 +1,13 @@
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { ok, fail } from "@/lib/api-response";
-import { requireGuide } from "@/lib/guide-auth";
+import { verifyGuideAccess } from "@/lib/guide-auth";
+import {
+  checkGuideDepartureOwnership,
+  parsePositiveBigInt,
+  recordGuideAuditLog,
+  redactSensitiveNotes,
+} from "@/lib/guide-privacy";
 
 function serialize<T>(data: T): T {
   return JSON.parse(
@@ -60,92 +66,87 @@ type RawScheduleRow = {
 };
 
 export async function GET(req: NextRequest) {
-  const guideAuth = await requireGuide(req);
+  const authCheck = await verifyGuideAccess(req);
 
-  if (!guideAuth) {
-    return fail("Bạn không có quyền truy cập khu vực hướng dẫn viên", 403);
+  if (!authCheck.ok) {
+    return fail(authCheck.message, authCheck.status);
   }
 
   try {
-    const guideId = Number(guideAuth.guideId);
+    const guideId = BigInt(authCheck.guide.guideId);
 
-    if (!guideId || Number.isNaN(guideId)) {
-      return fail("Không xác định được hướng dẫn viên", 403);
-    }
-
-    const rows = await prisma.$queryRawUnsafe<RawScheduleRow[]>(
-      `
-        WITH booking_summary AS (
-          SELECT
-            departure_id,
-            COUNT(id) AS bookingCount,
-            COALESCE(SUM(adult_count + child_count), 0) AS passengerCount
-          FROM bookings
-          WHERE booking_status NOT IN ('CANCELLED')
-          GROUP BY departure_id
-        )
-
+    const rows = await prisma.$queryRaw<RawScheduleRow[]>`
+      WITH booking_summary AS (
         SELECT
-          ga.id AS assignmentId,
-          ga.notes AS assignmentNotes,
+          departure_id,
+          COUNT(id) AS bookingCount,
+          COALESCE(SUM(adult_count + child_count), 0) AS passengerCount
+        FROM bookings
+        WHERE booking_status NOT IN ('CANCELLED')
+        GROUP BY departure_id
+      )
 
-          ds.id AS departureId,
-          ds.departure_code AS departureCode,
-          ds.start_date AS startDate,
-          ds.end_date AS endDate,
-          ds.max_seats AS maxSeats,
-          ds.available_seats AS availableSeats,
-          ds.booked_seats AS bookedSeats,
-          ds.booking_status AS bookingStatus,
+      SELECT
+        ga.id AS assignmentId,
+        ga.notes AS assignmentNotes,
 
-          ISNULL(dope.operation_status, 'PREPARING') AS operationStatus,
+        ds.id AS departureId,
+        ds.departure_code AS departureCode,
+        ds.start_date AS startDate,
+        ds.end_date AS endDate,
+        ds.max_seats AS maxSeats,
+        ds.available_seats AS availableSeats,
+        ds.booked_seats AS bookedSeats,
+        ds.booking_status AS bookingStatus,
 
-          t.id AS tourId,
-          t.tour_code AS tourCode,
-          t.tour_name AS tourName,
-          t.tour_type AS tourType,
-          t.duration_days AS durationDays,
-          t.duration_nights AS durationNights,
-          t.featured_image_url AS featuredImageUrl,
-          t.short_description AS shortDescription,
+        ISNULL(dope.operation_status, 'PREPARING') AS operationStatus,
 
-          d.destination_name AS destinationName,
-          d.city AS destinationCity,
-          d.country AS destinationCountry,
+        t.id AS tourId,
+        t.tour_code AS tourCode,
+        t.tour_name AS tourName,
+        t.tour_type AS tourType,
+        t.duration_days AS durationDays,
+        t.duration_nights AS durationNights,
+        t.featured_image_url AS featuredImageUrl,
+        t.short_description AS shortDescription,
 
-          i.id AS itineraryId,
-          i.title AS itineraryTitle,
+        d.destination_name AS destinationName,
+        d.city AS destinationCity,
+        d.country AS destinationCountry,
 
-          iday.id AS dayId,
-          iday.day_no AS dayNo,
-          iday.title AS dayTitle,
-          iday.description AS dayDescription,
-          iday.overnight_location AS overnightLocation,
+        i.id AS itineraryId,
+        i.title AS itineraryTitle,
 
-          ia.id AS activityId,
-          ia.activity_time AS activityTime,
-          ia.activity_title AS activityTitle,
-          ia.location_name AS locationName,
-          ia.description AS activityDescription,
-          ia.sort_order AS sortOrder,
+        iday.id AS dayId,
+        iday.day_no AS dayNo,
+        iday.title AS dayTitle,
+        iday.description AS dayDescription,
+        iday.overnight_location AS overnightLocation,
 
-          ISNULL(bs.bookingCount, 0) AS bookingCount,
-          ISNULL(bs.passengerCount, 0) AS passengerCount
-        FROM guide_assignments ga
-        INNER JOIN departure_schedules ds ON ga.departure_id = ds.id
-        INNER JOIN tours t ON ds.tour_id = t.id
-        LEFT JOIN destinations d ON t.destination_id = d.id
-        LEFT JOIN departure_operations dope ON dope.departure_id = ds.id
-        LEFT JOIN booking_summary bs ON bs.departure_id = ds.id
-        LEFT JOIN itineraries i ON i.tour_id = t.id
-          AND i.is_active = 1
-        LEFT JOIN itinerary_days iday ON iday.itinerary_id = i.id
-        LEFT JOIN itinerary_activities ia ON ia.itinerary_day_id = iday.id
-        WHERE ga.guide_id = @P1
-        ORDER BY ds.start_date ASC, iday.day_no ASC, ia.sort_order ASC, ia.id ASC
-      `,
-      guideId
-    );
+        ia.id AS activityId,
+        ia.activity_time AS activityTime,
+        ia.activity_title AS activityTitle,
+        ia.location_name AS locationName,
+        ia.description AS activityDescription,
+        ia.sort_order AS sortOrder,
+
+        ISNULL(bs.bookingCount, 0) AS bookingCount,
+        ISNULL(bs.passengerCount, 0) AS passengerCount
+      FROM guide_assignments ga
+      INNER JOIN departure_schedules ds ON ga.departure_id = ds.id
+      INNER JOIN tours t ON ds.tour_id = t.id
+      LEFT JOIN destinations d ON t.destination_id = d.id
+      LEFT JOIN departure_operations dope ON dope.departure_id = ds.id
+      LEFT JOIN booking_summary bs ON bs.departure_id = ds.id
+      LEFT JOIN itineraries i ON i.tour_id = t.id
+        AND i.is_active = 1
+      LEFT JOIN itinerary_days iday ON iday.itinerary_id = i.id
+      LEFT JOIN itinerary_activities ia ON ia.itinerary_day_id = iday.id
+      WHERE ga.guide_id = ${guideId}
+        AND ds.guide_id IS NOT NULL
+        AND ds.guide_id = ga.guide_id
+      ORDER BY ds.start_date ASC, iday.day_no ASC, ia.sort_order ASC, ia.id ASC
+    `;
 
     const map = new Map<string, any>();
 
@@ -155,7 +156,7 @@ export async function GET(req: NextRequest) {
       if (!map.has(assignmentId)) {
         map.set(assignmentId, {
           assignmentId,
-          assignmentNotes: row.assignmentNotes,
+          assignmentNotes: redactSensitiveNotes(row.assignmentNotes),
 
           departureId: String(row.departureId),
           departureCode: row.departureCode,
@@ -242,46 +243,84 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const guideAuth = await requireGuide(req);
+  const authCheck = await verifyGuideAccess(req);
 
-  if (!guideAuth) {
-    return fail("Bạn không có quyền truy cập khu vực hướng dẫn viên", 403);
+  if (!authCheck.ok) {
+    await recordGuideAuditLog(req, {
+      module: "GUIDE_SCHEDULE",
+      action: "CREATE_ITINERARY_NOTE_DENIED",
+      entityName: "departure_schedules",
+      newData: { reason: authCheck.reason },
+    });
+    return fail(authCheck.message, authCheck.status);
   }
+
+  const guideId = BigInt(authCheck.guide.guideId);
+  const guideUserId = BigInt(authCheck.guide.userId);
 
   try {
     const body = await req.json();
 
-    const departureId = Number(body.departureId);
-    const dayNo = Number(body.dayNo);
-    const content = String(body.content || "").trim();
+    const departureId = parsePositiveBigInt(body?.departureId);
+    const dayNo = Number(body?.dayNo);
+    const rawContent = String(body?.content || "").trim();
 
-    if (!departureId || Number.isNaN(departureId)) {
-      return fail("Thiếu departureId", 400);
+    if (departureId === null) {
+      return fail("Thiếu hoặc sai định dạng departureId", 400);
     }
 
-    if (!content) {
+    if (!rawContent) {
       return fail("Vui lòng nhập nội dung ghi chú", 400);
     }
 
-    await prisma.$executeRawUnsafe(
-      `
-        INSERT INTO departure_operation_logs (
-          departure_id,
-          log_type,
-          content,
-          created_by
-        )
-        VALUES (
-          @P1,
-          'ITINERARY_NOTE',
-          @P2,
-          @P3
-        )
-      `,
-      departureId,
-      `Ngày ${dayNo || "?"}: ${content}`,
-      Number(guideAuth.userId)
-    );
+    // Chặn IDOR: xác minh departureId có thực sự được phân công còn hiệu lực cho HDV đang đăng nhập không
+    const ownership = await checkGuideDepartureOwnership(departureId, guideId);
+
+    if (
+      ownership.status === "NOT_FOUND" ||
+      ownership.status === "FORBIDDEN_NOT_ASSIGNED"
+    ) {
+      await recordGuideAuditLog(req, {
+        actorUserId: guideUserId,
+        module: "GUIDE_SCHEDULE",
+        action: "CREATE_ITINERARY_NOTE_DENIED",
+        entityName: "departure_schedules",
+        newData: { reason: "GUIDE_NOT_ASSIGNED" },
+      });
+      // Trả 404 thống nhất để không làm lộ sự tồn tại của chuyến đi thuộc HDV khác
+      return fail("Không tìm thấy chuyến đi được phân công", 404);
+    }
+
+    const safeContent = redactSensitiveNotes(rawContent) ?? rawContent;
+    const formattedNote = `Ngày ${
+      !Number.isNaN(dayNo) && dayNo > 0 ? dayNo : "?"
+    }: ${safeContent}`;
+
+    await prisma.$executeRaw`
+      INSERT INTO departure_operation_logs (
+        departure_id,
+        log_type,
+        content,
+        created_by
+      )
+      VALUES (
+        ${departureId},
+        'ITINERARY_NOTE',
+        ${formattedNote},
+        ${guideUserId}
+      )
+    `;
+
+    await recordGuideAuditLog(req, {
+      actorUserId: guideUserId,
+      module: "GUIDE_SCHEDULE",
+      action: "CREATE_ITINERARY_NOTE",
+      entityName: "departure_schedules",
+      entityId: departureId,
+      newData: {
+        dayNo: !Number.isNaN(dayNo) && dayNo > 0 ? dayNo : null,
+      },
+    });
 
     return ok(null, "Đã lưu ghi chú lịch trình");
   } catch (error) {

@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { ok, fail } from "@/lib/api-response";
-import { requireGuide } from "@/lib/guide-auth";
+import { verifyGuideAccess } from "@/lib/guide-auth";
 
 function serialize<T>(data: T): T {
   return JSON.parse(
@@ -12,40 +12,55 @@ function serialize<T>(data: T): T {
 }
 
 export async function GET(req: NextRequest) {
-  const guideAuth = await requireGuide(req);
+  const authCheck = await verifyGuideAccess(req);
 
-  if (!guideAuth) {
-    return fail("Bạn không có quyền truy cập khu vực hướng dẫn viên", 403);
+  if (!authCheck.ok) {
+    return fail(authCheck.message, authCheck.status);
   }
 
   try {
-    const rows: any[] = await prisma.$queryRawUnsafe(
-      `
-        SELECT
-          u.id AS userId,
-          u.full_name AS fullName,
-          u.email,
-          u.phone,
-          u.avatar_url AS avatarUrl,
+    const guideId = BigInt(authCheck.guide.guideId);
 
-          tg.id AS guideId,
-          tg.guide_code AS guideCode,
-          tg.region,
-          tg.languages,
-          tg.experience_years AS experienceYears,
-          tg.status
-        FROM tour_guides tg
-        INNER JOIN users u ON tg.user_id = u.id
-        WHERE tg.id = @P1
-      `,
-      BigInt(guideAuth.guideId)
-    );
+    const rows: any[] = await prisma.$queryRaw`
+      SELECT
+        u.id AS userId,
+        u.full_name AS fullName,
+        u.email,
+        u.phone,
+        u.avatar_url AS avatarUrl,
+
+        tg.id AS guideId,
+        tg.guide_code AS guideCode,
+        tg.region,
+        tg.languages,
+        tg.experience_years AS experienceYears,
+        tg.status
+      FROM tour_guides tg
+      INNER JOIN users u ON tg.user_id = u.id
+      WHERE tg.id = ${guideId}
+    `;
 
     if (!rows.length) {
       return fail("Không tìm thấy thông tin hướng dẫn viên", 404);
     }
 
-    return ok(serialize(rows[0]), "Lấy thông tin hướng dẫn viên thành công");
+    const row = rows[0];
+    return ok(
+      serialize({
+        userId: row.userId,
+        fullName: row.fullName,
+        email: row.email,
+        phone: row.phone,
+        avatarUrl: row.avatarUrl,
+        guideId: row.guideId,
+        guideCode: row.guideCode,
+        region: row.region,
+        languages: row.languages,
+        experienceYears: row.experienceYears,
+        status: row.status,
+      }),
+      "Lấy thông tin hướng dẫn viên thành công"
+    );
   } catch (error) {
     console.error("GET /api/guide/me error:", error);
     return fail("Không thể lấy thông tin hướng dẫn viên", 500);
