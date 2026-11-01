@@ -3,7 +3,13 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { getGuideMeApi, type GuideMe } from "@/lib/api/guide.api";
+import {
+  clearAuthStorage,
+  getGuideMeApi,
+  isForbiddenError,
+  isUnauthorizedError,
+  type GuideMe,
+} from "@/lib/api/guide.api";
 
 type GuideShellProps = {
   guide?: GuideMe | null;
@@ -32,10 +38,12 @@ export default function GuideShell({ guide, children }: GuideShellProps) {
   const router = useRouter();
 
   const [shellGuide, setShellGuide] = useState<GuideMe | null>(guide || null);
+  const [forbiddenMessage, setForbiddenMessage] = useState("");
 
   useEffect(() => {
     if (guide) {
       setShellGuide(guide);
+      setForbiddenMessage("");
       return;
     }
 
@@ -47,10 +55,24 @@ export default function GuideShell({ guide, children }: GuideShellProps) {
 
         if (mounted) {
           setShellGuide(data);
+          setForbiddenMessage("");
         }
-      } catch {
+      } catch (error) {
+        if (isUnauthorizedError(error)) {
+          clearAuthStorage();
+          router.replace("/login");
+          return;
+        }
+
         if (mounted) {
           setShellGuide(null);
+          if (isForbiddenError(error)) {
+            setForbiddenMessage(
+              error instanceof Error
+                ? error.message
+                : "Tài khoản không có quyền truy cập cổng Hướng dẫn viên."
+            );
+          }
         }
       }
     }
@@ -60,7 +82,7 @@ export default function GuideShell({ guide, children }: GuideShellProps) {
     return () => {
       mounted = false;
     };
-  }, [guide]);
+  }, [guide, router]);
 
   const displayGuide = shellGuide || guide || null;
 
@@ -72,10 +94,7 @@ export default function GuideShell({ guide, children }: GuideShellProps) {
   }, [displayGuide?.guideCode, displayGuide?.region]);
 
   function handleLogout() {
-    localStorage.removeItem("access_token");
-    localStorage.removeItem("user");
-    sessionStorage.removeItem("access_token");
-    sessionStorage.removeItem("user");
+    clearAuthStorage();
     router.push("/login");
   }
 
@@ -256,7 +275,18 @@ export default function GuideShell({ guide, children }: GuideShellProps) {
         </header>
 
         <div className="px-4 py-6 md:px-7 md:py-7 xl:px-8 xl:py-8">
-          {children}
+          {forbiddenMessage ? (
+            <section className="rounded-[28px] border border-[#ffd5d1] bg-white p-10 text-center shadow-sm">
+              <p className="text-xl font-black text-[#ba1a1a]">
+                {forbiddenMessage}
+              </p>
+              <p className="mt-2 text-sm font-semibold text-[#536163]">
+                Vui lòng đăng nhập bằng tài khoản Hướng dẫn viên đang hoạt động.
+              </p>
+            </section>
+          ) : (
+            children
+          )}
         </div>
       </section>
 

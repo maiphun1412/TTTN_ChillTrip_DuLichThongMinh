@@ -1,10 +1,17 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import GuideShell from "@/components/guide/GuideShell";
 import {
+  clearAuthStorage,
   getGuideMeApi,
   getGuidePassengersApi,
+  isForbiddenError,
+  isNotFoundError,
+  isUnauthorizedError,
+  MISSING_PASSENGER_INFO_MESSAGE,
+  UNSHARED_PHONE_MESSAGE,
   type GuideMe,
   type GuidePassenger,
   type GuidePassengerBooking,
@@ -80,7 +87,7 @@ function statusText(status?: string | null) {
 }
 
 function getInitials(name?: string | null) {
-  if (!name) return "?";
+  if (!name || name === MISSING_PASSENGER_INFO_MESSAGE) return "?";
 
   return name
     .split(" ")
@@ -91,23 +98,53 @@ function getInitials(name?: string | null) {
     .toUpperCase();
 }
 
+function formatBookingContactPhone(booking: GuidePassengerBooking) {
+  if (booking.contactPhoneShared && booking.contactPhone) {
+    return booking.contactPhone;
+  }
+  return UNSHARED_PHONE_MESSAGE;
+}
+
+function formatPassengerPhone(
+  passenger: GuidePassenger,
+  _booking?: GuidePassengerBooking
+) {
+  if (passenger.hasPassengerInfo === false) {
+    return UNSHARED_PHONE_MESSAGE;
+  }
+  if (passenger.phoneShared && passenger.phone) {
+    return passenger.phone;
+  }
+  return UNSHARED_PHONE_MESSAGE;
+}
+
 function getBookingPassengerRows(booking: GuidePassengerBooking) {
   if (booking.passengers.length > 0) {
-    return booking.passengers;
+    return booking.passengers.map((passenger) => ({
+      ...passenger,
+      hasPassengerInfo: passenger.hasPassengerInfo !== false,
+    }));
   }
 
-  const total = Number(booking.adultCount || 0) + Number(booking.childCount || 0);
+  const total = Math.max(
+    1,
+    Number(booking.adultCount || 0) + Number(booking.childCount || 0)
+  );
 
   return Array.from({ length: total }).map((_, index) => ({
-    id: `${booking.id}-fallback-${index}`,
+    id: `${booking.id}-missing-${index}`,
     bookingId: booking.id,
     bookingCode: booking.bookingCode,
     bookingStatus: booking.bookingStatus,
     passengerType: index < Number(booking.adultCount || 0) ? "ADULT" : "CHILD",
-    fullName: index === 0 ? booking.contactName : `Hành khách ${index + 1}`,
-    phone: index === 0 ? booking.contactPhone : "",
-    email: index === 0 ? booking.contactEmail : "",
-    isBookingContact: index === 0,
+    fullName: MISSING_PASSENGER_INFO_MESSAGE,
+    hasPassengerInfo: false,
+    phone: null,
+    phoneShared: false,
+    isBookingContact: false,
+    contactName: booking.contactName,
+    contactPhone: booking.contactPhoneShared ? booking.contactPhone : null,
+    contactPhoneShared: Boolean(booking.contactPhoneShared),
   })) as GuidePassenger[];
 }
 
@@ -165,6 +202,7 @@ function groupBookingsByPickup(bookings: GuidePassengerBooking[]) {
 }
 
 export default function GuidePassengersPage() {
+  const router = useRouter();
   const [guide, setGuide] = useState<GuideMe | null>(null);
   const [trips, setTrips] = useState<GuidePassengerTrip[]>([]);
   const [selectedId, setSelectedId] = useState("");
@@ -192,6 +230,27 @@ export default function GuidePassengersPage() {
     } catch (error) {
       setGuide(null);
       setTrips([]);
+
+      if (isUnauthorizedError(error)) {
+        clearAuthStorage();
+        router.replace("/login");
+        return;
+      }
+
+      if (isForbiddenError(error)) {
+        setErrorMessage(
+          error instanceof Error
+            ? error.message
+            : "Bạn không có quyền truy cập danh sách khách và điểm đón."
+        );
+        return;
+      }
+
+      if (isNotFoundError(error)) {
+        setErrorMessage("Không tìm thấy chuyến đi được phân công.");
+        return;
+      }
+
       setErrorMessage(
         error instanceof Error
           ? error.message
@@ -209,8 +268,14 @@ export default function GuidePassengersPage() {
   const selectedTrip =
     trips.find((trip) => trip.assignmentId === selectedId) || trips[0] || null;
 
+  const isAccessAllowed = selectedTrip
+    ? selectedTrip.passengerAccessAllowed !== false
+    : false;
+
   const filteredBookings = useMemo(() => {
-    if (!selectedTrip) return [];
+    if (!selectedTrip || selectedTrip.passengerAccessAllowed === false) {
+      return [];
+    }
 
     const search = keyword.trim().toLowerCase();
 
@@ -221,13 +286,7 @@ export default function GuidePassengersPage() {
         .map((passenger) =>
           [
             passenger.fullName,
-            passenger.phone,
-            passenger.email,
-            passenger.idNumber,
-            passenger.passportNumber,
-            passenger.mealNote,
-            passenger.healthNote,
-            passenger.roomPreference,
+            passenger.phoneShared ? passenger.phone : "",
           ]
             .filter(Boolean)
             .join(" ")
@@ -237,11 +296,9 @@ export default function GuidePassengersPage() {
       const text = [
         booking.bookingCode,
         booking.contactName,
-        booking.contactPhone,
-        booking.contactEmail,
+        booking.contactPhoneShared ? booking.contactPhone : "",
         booking.pickupName,
         booking.pickupAddress,
-        booking.specialNotes,
         passengerText,
       ]
         .filter(Boolean)
@@ -258,6 +315,7 @@ export default function GuidePassengersPage() {
   );
 
   const flatPassengers = useMemo(() => {
+    if (!isAccessAllowed) return [];
     return filteredBookings.flatMap((booking) =>
       getBookingPassengerRows(booking).map((passenger, index) => ({
         booking,
@@ -265,17 +323,22 @@ export default function GuidePassengersPage() {
         index,
       }))
     );
-  }, [filteredBookings]);
+  }, [filteredBookings, isAccessAllowed]);
 
   const summary = useMemo(() => {
-    const specialNoteCount = filteredBookings.filter(
+    const registeredPassengerCount = flatPassengers.filter(
+      ({ passenger }) =>
+        passenger.hasPassengerInfo !== false &&
+        passenger.fullName !== MISSING_PASSENGER_INFO_MESSAGE
+    ).length;
+    const missingPassengerCount =
+      flatPassengers.length - registeredPassengerCount;
+
+    const sharedPhoneCount = filteredBookings.filter(
       (booking) =>
-        booking.specialNotes ||
+        (booking.contactPhoneShared && Boolean(booking.contactPhone)) ||
         getBookingPassengerRows(booking).some(
-          (passenger) =>
-            passenger.mealNote ||
-            passenger.healthNote ||
-            passenger.roomPreference
+          (passenger) => passenger.phoneShared && Boolean(passenger.phone)
         )
     ).length;
 
@@ -283,11 +346,17 @@ export default function GuidePassengersPage() {
       pickupCount: pickupGroups.length,
       bookingCount: filteredBookings.length,
       passengerCount: flatPassengers.length,
-      specialNoteCount,
+      registeredPassengerCount,
+      missingPassengerCount,
+      sharedPhoneCount,
     };
   }, [filteredBookings, flatPassengers, pickupGroups.length]);
 
   function buildExportRows() {
+    if (!selectedTrip || selectedTrip.passengerAccessAllowed === false) {
+      return [];
+    }
+
     return flatPassengers.map(({ booking, passenger }, index) => ({
       stt: index + 1,
       pickupName: booking.pickupName || "Chưa chọn điểm đón",
@@ -295,22 +364,18 @@ export default function GuidePassengersPage() {
       pickupTime: formatDateTime(booking.pickupTime),
       bookingCode: booking.bookingCode,
       bookingStatus: statusText(booking.bookingStatus),
+      contactPhone: formatBookingContactPhone(booking),
       passengerName: passenger.fullName || "Chưa cập nhật",
       passengerType: passengerTypeText(passenger.passengerType),
-      phone: passenger.phone || booking.contactPhone || "",
-      email: passenger.email || booking.contactEmail || "",
-      documentNumber: passenger.idNumber || passenger.passportNumber || "",
-      mealNote: passenger.mealNote || "",
-      healthNote: passenger.healthNote || "",
-      roomPreference: passenger.roomPreference || "",
-      bookingNote: booking.specialNotes || "",
+      phone: formatPassengerPhone(passenger, booking),
     }));
   }
 
   function exportPdf() {
-    if (!selectedTrip) return;
+    if (!selectedTrip || selectedTrip.passengerAccessAllowed === false) return;
 
     const rows = buildExportRows();
+    if (rows.length === 0) return;
 
     const rowHtml = rows
       .map(
@@ -318,16 +383,14 @@ export default function GuidePassengersPage() {
           <tr>
             <td>${escapeHtml(row.stt)}</td>
             <td>${escapeHtml(row.pickupName)}<br/><small>${escapeHtml(
-              row.pickupTime
-            )}</small></td>
+          row.pickupTime
+        )}</small></td>
             <td>${escapeHtml(row.bookingCode)}</td>
+            <td>${escapeHtml(row.bookingStatus)}</td>
+            <td>${escapeHtml(row.contactPhone)}</td>
             <td>${escapeHtml(row.passengerName)}</td>
             <td>${escapeHtml(row.passengerType)}</td>
             <td>${escapeHtml(row.phone)}</td>
-            <td>${escapeHtml(row.documentNumber)}</td>
-            <td>${escapeHtml(
-              row.mealNote || row.healthNote || row.roomPreference || row.bookingNote
-            )}</td>
           </tr>
         `
       )
@@ -343,8 +406,8 @@ export default function GuidePassengersPage() {
       <head>
         <meta charset="UTF-8" />
         <title>Danh sách khách và điểm đón - ${escapeHtml(
-          selectedTrip.tourName
-        )}</title>
+      selectedTrip.tourName
+    )}</title>
         <style>
           body {
             font-family: "Times New Roman", Times, serif;
@@ -403,19 +466,17 @@ export default function GuidePassengersPage() {
         <div class="meta">
           <div><b>Tour:</b> ${escapeHtml(selectedTrip.tourName)}</div>
           <div><b>Mã tour:</b> ${escapeHtml(
-            selectedTrip.tourCode
-          )} | <b>Mã khởi hành:</b> ${escapeHtml(
-            selectedTrip.departureCode
-          )}</div>
+      selectedTrip.tourCode
+    )} | <b>Mã khởi hành:</b> ${escapeHtml(
+      selectedTrip.departureCode
+    )}</div>
           <div><b>Thời gian:</b> ${escapeHtml(
-            formatDate(selectedTrip.startDate)
-          )} - ${escapeHtml(formatDate(selectedTrip.endDate))}</div>
+      formatDate(selectedTrip.startDate)
+    )} - ${escapeHtml(formatDate(selectedTrip.endDate))}</div>
           <div><b>HDV:</b> ${escapeHtml(guide?.fullName || "")}</div>
-          <div><b>Điểm đón:</b> ${
-            summary.pickupCount
-          } | <b>Booking:</b> ${summary.bookingCount} | <b>Khách:</b> ${
-            summary.passengerCount
-          }</div>
+          <div><b>Điểm đón:</b> ${summary.pickupCount
+      } | <b>Booking:</b> ${summary.bookingCount} | <b>Khách:</b> ${summary.passengerCount
+      }</div>
         </div>
 
         <table>
@@ -424,11 +485,11 @@ export default function GuidePassengersPage() {
               <th>STT</th>
               <th>Điểm đón</th>
               <th>Mã booking</th>
+              <th>Trạng thái</th>
+              <th>SĐT liên hệ</th>
               <th>Họ tên khách</th>
               <th>Loại khách</th>
-              <th>SĐT</th>
-              <th>CCCD/Passport</th>
-              <th>Ghi chú</th>
+              <th>SĐT khách</th>
             </tr>
           </thead>
           <tbody>
@@ -437,7 +498,7 @@ export default function GuidePassengersPage() {
         </table>
 
         <div class="footer">
-          In từ hệ thống ChillTrip Guide Center.
+          In từ hệ thống ChillTrip Guide Center (Tuân thủ chính sách bảo vệ dữ liệu cá nhân).
         </div>
 
         <script>
@@ -453,9 +514,10 @@ export default function GuidePassengersPage() {
   }
 
   function exportExcel() {
-    if (!selectedTrip) return;
+    if (!selectedTrip || selectedTrip.passengerAccessAllowed === false) return;
 
     const rows = buildExportRows();
+    if (rows.length === 0) return;
 
     const rowHtml = rows
       .map(
@@ -467,15 +529,10 @@ export default function GuidePassengersPage() {
             <td>${escapeHtml(row.pickupTime)}</td>
             <td>${escapeHtml(row.bookingCode)}</td>
             <td>${escapeHtml(row.bookingStatus)}</td>
+            <td>${escapeHtml(row.contactPhone)}</td>
             <td>${escapeHtml(row.passengerName)}</td>
             <td>${escapeHtml(row.passengerType)}</td>
             <td>${escapeHtml(row.phone)}</td>
-            <td>${escapeHtml(row.email)}</td>
-            <td>${escapeHtml(row.documentNumber)}</td>
-            <td>${escapeHtml(row.mealNote)}</td>
-            <td>${escapeHtml(row.healthNote)}</td>
-            <td>${escapeHtml(row.roomPreference)}</td>
-            <td>${escapeHtml(row.bookingNote)}</td>
           </tr>
         `
       )
@@ -491,17 +548,17 @@ export default function GuidePassengersPage() {
       <body>
         <table border="1">
           <tr>
-            <th colspan="15">DANH SÁCH KHÁCH & ĐIỂM ĐÓN - ${escapeHtml(
-              selectedTrip.tourName
-            )}</th>
+            <th colspan="10">DANH SÁCH KHÁCH & ĐIỂM ĐÓN - ${escapeHtml(
+      selectedTrip.tourName
+    )}</th>
           </tr>
           <tr>
-            <td colspan="15">
+            <td colspan="10">
               Mã tour: ${escapeHtml(selectedTrip.tourCode)}
               | Mã khởi hành: ${escapeHtml(selectedTrip.departureCode)}
               | Thời gian: ${escapeHtml(
-                formatDate(selectedTrip.startDate)
-              )} - ${escapeHtml(formatDate(selectedTrip.endDate))}
+      formatDate(selectedTrip.startDate)
+    )} - ${escapeHtml(formatDate(selectedTrip.endDate))}
             </td>
           </tr>
           <tr></tr>
@@ -512,15 +569,10 @@ export default function GuidePassengersPage() {
             <th>Giờ đón</th>
             <th>Mã booking</th>
             <th>Trạng thái booking</th>
+            <th>SĐT liên hệ</th>
             <th>Họ tên khách</th>
             <th>Loại khách</th>
-            <th>SĐT</th>
-            <th>Email</th>
-            <th>CCCD/Passport</th>
-            <th>Ghi chú bữa ăn</th>
-            <th>Ghi chú sức khỏe</th>
-            <th>Phòng</th>
-            <th>Ghi chú booking</th>
+            <th>SĐT khách</th>
           </tr>
           ${rowHtml}
         </table>
@@ -546,6 +598,14 @@ export default function GuidePassengersPage() {
   }
 
   function handleExport() {
+    if (
+      !selectedTrip ||
+      selectedTrip.passengerAccessAllowed === false ||
+      flatPassengers.length === 0
+    ) {
+      return;
+    }
+
     if (exportType === "PDF") {
       exportPdf();
       return;
@@ -569,8 +629,9 @@ export default function GuidePassengersPage() {
               </h1>
 
               <p className="mt-4 max-w-3xl text-[15px] font-medium leading-7 text-[#536163] md:text-base">
-                Xem khách theo từng điểm đón để HDV dễ kiểm tra ai lên xe ở đâu,
-                liên hệ ai và khách nào có ghi chú đặc biệt.
+                Xem khách theo từng điểm đón để HDV dễ kiểm tra ai lên xe ở đâu
+                và liên hệ hành khách đã đồng ý chia sẻ số điện thoại trong thời
+                gian cho phép.
               </p>
             </div>
 
@@ -589,7 +650,11 @@ export default function GuidePassengersPage() {
               <button
                 type="button"
                 onClick={handleExport}
-                disabled={!selectedTrip || flatPassengers.length === 0}
+                disabled={
+                  !selectedTrip ||
+                  selectedTrip.passengerAccessAllowed === false ||
+                  flatPassengers.length === 0
+                }
                 className="rounded-full bg-[#00606c] px-6 py-3 text-sm font-black !text-white shadow-[0_12px_24px_rgba(0,96,108,0.18)] transition hover:bg-[#007b8a] disabled:cursor-not-allowed disabled:bg-gray-300"
               >
                 Xuất danh sách
@@ -625,11 +690,10 @@ export default function GuidePassengersPage() {
                       setSelectedId(trip.assignmentId);
                       setKeyword("");
                     }}
-                    className={`w-full rounded-[28px] border p-4 text-left transition ${
-                      selectedTrip?.assignmentId === trip.assignmentId
+                    className={`w-full rounded-[28px] border p-4 text-left transition ${selectedTrip?.assignmentId === trip.assignmentId
                         ? "border-[#00606c] bg-[#effbfc] shadow-md"
                         : "border-[#dfe8ea] bg-white hover:bg-[#f7fbfc]"
-                    }`}
+                      }`}
                   >
                     <div className="flex gap-4">
                       <div className="h-24 w-24 flex-shrink-0 overflow-hidden rounded-[22px] bg-[#e5e9ea]">
@@ -665,6 +729,16 @@ export default function GuidePassengersPage() {
                           <span className="rounded-full bg-[#fff3e8] px-3 py-1 text-[11px] font-black text-[#9b4500]">
                             {trip.bookingCount} booking
                           </span>
+
+                          {trip.passengerAccessAllowed === false ? (
+                            <span className="rounded-full bg-[#fff0ef] px-3 py-1 text-[11px] font-black text-[#ba1a1a]">
+                              Ngoài hạn xem khách
+                            </span>
+                          ) : (
+                            <span className="rounded-full bg-[#e6f9ed] px-3 py-1 text-[11px] font-black text-[#0e6b38]">
+                              Đang mở danh sách
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -719,14 +793,14 @@ export default function GuidePassengersPage() {
                           />
 
                           <SummaryBox
-                            label="Lưu ý"
-                            value={String(summary.specialNoteCount)}
+                            label="SĐT chia sẻ"
+                            value={String(summary.sharedPhoneCount)}
                           />
                         </div>
 
                         <div className="mt-5 rounded-[22px] bg-[#f7fbfc] p-4">
                           <p className="text-sm font-black text-[#00606c]">
-                            Thông tin khởi hành
+                            Thông tin khởi hành & quyền truy cập
                           </p>
 
                           <p className="mt-2 text-sm font-semibold leading-7 text-[#536163]">
@@ -735,8 +809,14 @@ export default function GuidePassengersPage() {
                               {selectedTrip.departureCode}
                             </span>
                             <br />
-                            Thời gian: {formatDate(selectedTrip.startDate)} -{" "}
+                            Thời gian tour: {formatDate(selectedTrip.startDate)} -{" "}
                             {formatDate(selectedTrip.endDate)}
+                            <br />
+                            Khung giờ được phép xem danh sách khách:{" "}
+                            <span className="font-black text-[#172124]">
+                              {formatDate(selectedTrip.allowedFrom)} -{" "}
+                              {formatDate(selectedTrip.allowedUntil)}
+                            </span>
                           </p>
                         </div>
                       </div>
@@ -757,10 +837,27 @@ export default function GuidePassengersPage() {
 
                       <p className="rounded-full bg-[#f1f7f8] px-5 py-3 text-sm font-black text-[#00606c]">
                         {summary.passengerCount} khách đang hiển thị
+                        {summary.missingPassengerCount > 0
+                          ? ` (${summary.registeredPassengerCount} đã có hồ sơ • ${summary.missingPassengerCount} chưa có thông tin)`
+                          : ""}
                       </p>
                     </div>
 
-                    {pickupGroups.length === 0 ? (
+                    {selectedTrip.passengerAccessAllowed === false ? (
+                      <div className="rounded-[26px] border border-[#ffdcb8] bg-[#fff7ed] p-6 text-left">
+                        <p className="text-base font-black text-[#9b4500]">
+                          Danh sách hành khách đang bị giới hạn theo chính sách bảo mật
+                        </p>
+                        <p className="mt-2 text-sm font-semibold leading-6 text-[#536163]">
+                          {selectedTrip.passengerAccessMessage ||
+                            "Chỉ được xem danh sách khách trong khoảng 3 ngày trước ngày khởi hành đến 1 ngày sau ngày kết thúc chuyến."}
+                        </p>
+                        <p className="mt-3 text-xs font-black uppercase tracking-[0.14em] text-[#00606c]">
+                          Thời hạn cho phép: {formatDate(selectedTrip.allowedFrom)}{" "}
+                          – {formatDate(selectedTrip.allowedUntil)}
+                        </p>
+                      </div>
+                    ) : pickupGroups.length === 0 ? (
                       <StateBox text="Không tìm thấy khách phù hợp." />
                     ) : (
                       <div className="space-y-6">
@@ -834,6 +931,7 @@ function PickupGroupCard({ group }: { group: PickupGroup }) {
 
 function BookingBlock({ booking }: { booking: GuidePassengerBooking }) {
   const passengers = getBookingPassengerRows(booking);
+  const contactPhoneText = formatBookingContactPhone(booking);
 
   return (
     <div className="rounded-[24px] bg-white p-5 shadow-sm">
@@ -854,8 +952,16 @@ function BookingBlock({ booking }: { booking: GuidePassengerBooking }) {
           </p>
 
           <p className="mt-1 text-sm font-semibold text-[#6e797b]">
-            {booking.contactPhone}
-            {booking.contactEmail ? ` • ${booking.contactEmail}` : ""}
+            SĐT liên hệ:{" "}
+            <span
+              className={
+                booking.contactPhoneShared && booking.contactPhone
+                  ? "font-black text-[#00606c]"
+                  : "italic text-[#9b4500]"
+              }
+            >
+              {contactPhoneText}
+            </span>
           </p>
         </div>
 
@@ -869,29 +975,29 @@ function BookingBlock({ booking }: { booking: GuidePassengerBooking }) {
           <PassengerRow
             key={passenger.id || `${booking.id}-${index}`}
             passenger={passenger}
+            booking={booking}
             index={index}
           />
         ))}
       </div>
-
-      {booking.specialNotes ? (
-        <div className="mt-4 rounded-[20px] bg-[#fff7ed] p-4 text-sm font-semibold leading-6 text-[#9b4500]">
-          <span className="font-black">Ghi chú booking:</span>{" "}
-          {booking.specialNotes}
-        </div>
-      ) : null}
     </div>
   );
 }
 
 function PassengerRow({
   passenger,
+  booking,
   index,
 }: {
   passenger: GuidePassenger;
+  booking: GuidePassengerBooking;
   index: number;
 }) {
-  const documentNumber = passenger.idNumber || passenger.passportNumber || "";
+  const phoneDisplay = formatPassengerPhone(passenger, booking);
+  const isPhoneShared = phoneDisplay !== UNSHARED_PHONE_MESSAGE;
+  const isMissingInfo =
+    passenger.hasPassengerInfo === false ||
+    passenger.fullName === MISSING_PASSENGER_INFO_MESSAGE;
 
   return (
     <div className="rounded-[22px] border border-[#edf2f3] bg-[#fcfefe] p-4">
@@ -904,40 +1010,38 @@ function PassengerRow({
           <div>
             <p className="font-black text-[#172124]">
               {passenger.fullName || `Hành khách ${index + 1}`}
-              {passenger.isBookingContact ? (
-                <span className="ml-2 rounded-full bg-[#9defff] px-2 py-0.5 text-[10px] font-black text-[#001f24]">
-                  Liên hệ chính
+                {
+                  isMissingInfo?(
+                <span className = "ml-2 rounded-full bg-[#fff3e8] px-2.5 py-0.5 text-[10px] font-black text-[#9b4500]" >
+                      Chưa có hồ sơ khách
                 </span>
+            ) : passenger.isBookingContact ? (
+            <span className="ml-2 rounded-full bg-[#9defff] px-2 py-0.5 text-[10px] font-black text-[#001f24]">
+              Liên hệ chính
+            </span>
               ) : null}
-            </p>
-
-            <p className="mt-1 text-sm font-semibold text-[#6e797b]">
-              {passengerTypeText(passenger.passengerType)}
-              {passenger.phone ? ` • ${passenger.phone}` : ""}
-              {passenger.email ? ` • ${passenger.email}` : ""}
-            </p>
-          </div>
-        </div>
-
-        <div className="text-left md:text-right">
-          <p className="text-xs font-black uppercase tracking-[0.14em] text-[#91a0a4]">
-            Giấy tờ
           </p>
 
-          <p className="mt-1 text-sm font-black text-[#172124]">
-            {documentNumber || "Chưa cập nhật"}
+          <p className="mt-1 text-sm font-semibold text-[#6e797b]">
+            {passengerTypeText(passenger.passengerType)}
           </p>
         </div>
       </div>
 
-      {(passenger.mealNote || passenger.healthNote || passenger.roomPreference) && (
-        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
-          <NoteBox label="Bữa ăn" value={passenger.mealNote} />
-          <NoteBox label="Sức khỏe" value={passenger.healthNote} />
-          <NoteBox label="Phòng" value={passenger.roomPreference} />
-        </div>
-      )}
+      <div className="text-left md:text-right">
+        <p className="text-xs font-black uppercase tracking-[0.14em] text-[#91a0a4]">
+          Số điện thoại
+        </p>
+
+        <p
+          className={`mt-1 text-sm font-black ${isPhoneShared ? "text-[#172124]" : "text-[#9b4500]"
+            }`}
+        >
+          {phoneDisplay}
+        </p>
+      </div>
     </div>
+    </div >
   );
 }
 
@@ -949,20 +1053,6 @@ function SummaryBox({ label, value }: { label: string; value: string }) {
       </p>
 
       <p className="mt-2 text-2xl font-black text-[#00606c]">{value}</p>
-    </div>
-  );
-}
-
-function NoteBox({ label, value }: { label: string; value?: string | null }) {
-  return (
-    <div className="rounded-[18px] bg-[#f7fbfc] p-3">
-      <p className="text-[10px] font-black uppercase tracking-[0.12em] text-[#91a0a4]">
-        {label}
-      </p>
-
-      <p className="mt-1 text-sm font-bold text-[#536163]">
-        {value || "Không có"}
-      </p>
     </div>
   );
 }

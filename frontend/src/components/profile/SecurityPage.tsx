@@ -1,9 +1,23 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import HomeHeader from "@/components/home/HomeHeader";
 import ProfileSidebar from "@/components/profile/ProfileSidebar";
 import { getCurrentUserApi, type CurrentUserResponse } from "@/lib/api/auth.api";
+import {
+  formatAccessorRoleLabel,
+  formatConsentStatusLabel,
+  formatPrivacyDataTypeLabel,
+  formatPrivacyPurposeLabel,
+  formatPrivacyReasonLabel,
+  getMyBookingPrivacyConsentsApi,
+  getMyPrivacyAccessLogsApi,
+  updateBookingPrivacyConsentApi,
+  type CustomerBookingConsentItem,
+  type CustomerPrivacyAccessLog,
+  type CustomerPrivacyLogStats,
+} from "@/lib/api/privacy.api";
 
 type ProfileData = NonNullable<CurrentUserResponse["data"]>;
 
@@ -23,6 +37,80 @@ export default function SecurityPage() {
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState<"success" | "error" | "">("");
 
+  // Quản lý Consent chia sẻ SĐT với HDV theo từng booking/chuyến
+  const [consentSchemaReady, setConsentSchemaReady] = useState(true);
+  const [consentItems, setConsentItems] = useState<CustomerBookingConsentItem[]>([]);
+  const [consentsLoading, setConsentsLoading] = useState(true);
+  const [updatingBookingId, setUpdatingBookingId] = useState<string | null>(null);
+  const [consentFeedback, setConsentFeedback] = useState<{
+    type: "success" | "error";
+    text: string;
+  } | null>(null);
+
+  // Lịch sử truy cập dữ liệu cá nhân (privacy_access_logs)
+  const [accessLogs, setAccessLogs] = useState<CustomerPrivacyAccessLog[]>([]);
+  const [logStats, setLogStats] = useState<CustomerPrivacyLogStats>({
+    totalAccess: 0,
+    allowedCount: 0,
+    deniedCount: 0,
+    guideAccessCount: 0,
+  });
+  const [logsTotal, setLogsTotal] = useState(0);
+  const [logsPage, setLogsPage] = useState(1);
+  const [logsLoading, setLogsLoading] = useState(true);
+  const [resultFilter, setResultFilter] = useState<"" | "ALLOWED" | "DENIED">("");
+  const [selectedBookingId, setSelectedBookingId] = useState<string>("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [appliedQuery, setAppliedQuery] = useState("");
+
+  const loadConsents = useCallback(async () => {
+    try {
+      setConsentsLoading(true);
+      const res = await getMyBookingPrivacyConsentsApi();
+      setConsentSchemaReady(res.schemaReady);
+      setConsentItems(res.items || []);
+    } catch (error) {
+      console.warn("Load booking privacy consents error:", error);
+      setConsentItems([]);
+    } finally {
+      setConsentsLoading(false);
+    }
+  }, []);
+
+  const loadAccessLogs = useCallback(async () => {
+    try {
+      setLogsLoading(true);
+      const res = await getMyPrivacyAccessLogsApi({
+        result: resultFilter,
+        bookingId: selectedBookingId || undefined,
+        q: appliedQuery || undefined,
+        page: logsPage,
+        pageSize: 10,
+      });
+      setAccessLogs(res.items || []);
+      setLogsTotal(res.total || 0);
+      if (res.stats) {
+        setLogStats(res.stats);
+      }
+    } catch (error) {
+      console.warn("Load privacy access logs error:", error);
+      setAccessLogs([]);
+      setLogsTotal(0);
+    } finally {
+      setLogsLoading(false);
+    }
+  }, [resultFilter, selectedBookingId, appliedQuery, logsPage]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const bid = params.get("bookingId")?.trim();
+      if (bid) {
+        setSelectedBookingId(bid);
+      }
+    }
+  }, []);
+
   useEffect(() => {
     async function loadProfile() {
       try {
@@ -38,7 +126,38 @@ export default function SecurityPage() {
     }
 
     loadProfile();
-  }, []);
+    loadConsents();
+  }, [loadConsents]);
+
+  useEffect(() => {
+    loadAccessLogs();
+  }, [loadAccessLogs]);
+
+  async function handleConsentAction(
+    bookingId: string,
+    status: "GRANTED" | "DENIED" | "REVOKED"
+  ) {
+    try {
+      setUpdatingBookingId(bookingId);
+      setConsentFeedback(null);
+      const res = await updateBookingPrivacyConsentApi(bookingId, status);
+      setConsentFeedback({
+        type: "success",
+        text: res.message,
+      });
+      await loadConsents();
+    } catch (error) {
+      setConsentFeedback({
+        type: "error",
+        text:
+          error instanceof Error
+            ? error.message
+            : "Không thể cập nhật quyền chia sẻ số điện thoại",
+      });
+    } finally {
+      setUpdatingBookingId(null);
+    }
+  }
 
   async function handleChangePassword(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -171,8 +290,8 @@ export default function SecurityPage() {
                 value={
                   profile?.user?.lastLoginAt
                     ? new Date(profile.user.lastLoginAt).toLocaleDateString(
-                        "vi-VN"
-                      )
+                      "vi-VN"
+                    )
                     : "Chưa cập nhật"
                 }
                 desc="Theo dõi hoạt động tài khoản"
@@ -200,11 +319,10 @@ export default function SecurityPage() {
 
               {message ? (
                 <div
-                  className={`mb-6 rounded-2xl px-5 py-4 text-sm font-bold ${
-                    messageType === "success"
-                      ? "bg-green-50 text-green-700"
-                      : "bg-red-50 text-red-600"
-                  }`}
+                  className={`mb-6 rounded-2xl px-5 py-4 text-sm font-bold ${messageType === "success"
+                    ? "bg-green-50 text-green-700"
+                    : "bg-red-50 text-red-600"
+                    }`}
                 >
                   {message}
                 </div>
@@ -254,24 +372,445 @@ export default function SecurityPage() {
               </form>
             </section>
 
-            <section className="grid grid-cols-1 gap-6 md:grid-cols-2">
-              <SecurityOptionCard
-                title="Xác thực hai lớp"
-                desc="Tăng cường bảo mật khi đăng nhập bằng mã xác minh bổ sung."
-                status="Chưa bật"
-              />
+            <section
+              id="privacy-consents"
+              className="rounded-[3rem] bg-white p-6 shadow-sm shadow-cyan-900/5 md:p-10"
+            >
+              <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <p className="mb-1 text-xs font-extrabold uppercase tracking-[0.16em] text-[#9b4500]">
+                    Personal Privacy • Quyền kiểm soát dữ liệu
+                  </p>
+                  <h2 className="text-2xl font-extrabold tracking-tight text-slate-900">
+                    Quản lý quyền chia sẻ SĐT với Hướng dẫn viên
+                  </h2>
+                  <p className="mt-2 max-w-3xl text-sm leading-7 text-slate-500">
+                    Theo nguyên tắc <b>Privacy by Default</b>, số điện thoại của
+                    bạn luôn được ẩn với Hướng dẫn viên cho đến khi bạn chủ động
+                    cấp quyền trên từng đơn đặt chỗ/chuyến đi. Ngay cả khi đã cấp
+                    quyền, Hướng dẫn viên được phân công cũng chỉ xem được trong
+                    thời hạn từ 3 ngày trước ngày khởi hành đến 1 ngày sau khi kết
+                    thúc chuyến.
+                  </p>
+                </div>
 
-              <SecurityOptionCard
-                title="Thiết bị đăng nhập"
-                desc="Kiểm tra và quản lý các thiết bị đã từng đăng nhập tài khoản."
-                status="Đang theo dõi"
-              />
-            </section>
+                <button
+                  type="button"
+                  onClick={loadConsents}
+                  className="rounded-full border border-[#c5cfd1] bg-white px-5 py-2.5 text-xs font-extrabold text-[#00606c] transition hover:bg-[#eef2f3]"
+                >
+                  Làm mới trạng thái
+                </button>
+              </div>
+
+              {!consentSchemaReady ? (
+                <div className="mb-6 rounded-2xl border border-[#ffdcb8] bg-[#fff7ed] px-5 py-4 text-sm font-semibold text-[#9b4500]">
+                  Bảng lưu trữ đồng ý quyền riêng tư (<code>dbo.privacy_consents</code>)
+                  đang chờ kích hoạt trên cơ sở dữ liệu. Hệ thống đang bảo vệ mặc
+                  định: ẩn toàn bộ số điện thoại đối với Hướng dẫn viên.
+                </div>
+              ) : null}
+
+              {consentFeedback ? (
+                <div
+                  className={`mb-6 rounded-2xl px-5 py-4 text-sm font-bold ${consentFeedback.type === "success"
+                    ? "bg-green-50 text-green-700"
+                    : "bg-red-50 text-red-600"
+                    }`}
+                >
+                  {consentFeedback.text}
+                </div>
+              ) : null}
+
+              {consentsLoading ? (
+                <div className="rounded-3xl bg-[#f6fafb] p-8 text-center text-sm font-bold text-slate-500">
+                  Đang tải danh sách đơn đặt chỗ và trạng thái quyền riêng tư...
+                </div>
+              ) : consentItems.length === 0 ? (
+                <div className="rounded-3xl bg-[#f6fafb] p-8 text-center text-sm font-bold text-slate-500">
+                  Bạn chưa có đơn đặt tour nào để cấu hình quyền chia sẻ số điện
+                  thoại.
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {consentItems.map((item) => {
+                    const isUpdating = updatingBookingId === item.bookingId;
+                    const isCancelled =
+                      item.bookingStatus === "CANCELLED" ||
+                      item.bookingStatus === "REFUNDED";
+
+                    return (
+                      <div
+                        key={item.bookingId}
+                        className="rounded-[24px] border border-[#dfe5e6] bg-[#f9fbfc] p-5 transition hover:border-[#00606c]/30"
+                      >
+                        <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
+                          <div className="space-y-1.5">
+                            <div className="flex flex-wrap items-center gap-2.5">
+                              <span className="rounded-full bg-[#00606c]/10 px-3 py-1 text-xs font-extrabold text-[#00606c]">
+                                Đơn {item.bookingCode}
+                              </span>
+                              <span className="rounded-full bg-slate-200/70 px-3 py-1 text-xs font-bold text-slate-700">
+                                Chuyến {item.departureCode}
+                              </span>
+                              <span
+                                className={`rounded-full px-3 py-1 text-xs font-extrabold ${item.phoneShared
+                                  ? "bg-[#dff7e8] text-[#14532d]"
+                                  : item.consentStatus === "DENIED" ||
+                                    item.consentStatus === "REVOKED"
+                                    ? "bg-[#fff1df] text-[#9b4500]"
+                                    : "bg-slate-200 text-slate-700"
+                                  }`}
+                              >
+                                {formatConsentStatusLabel(item.consentStatus)}
+                              </span>
+                            </div>
+
+                            <h3 className="text-lg font-extrabold text-slate-900">
+                              {item.tourName}
+                            </h3>
+
+                            <p className="text-xs font-semibold text-slate-600">
+                              Khởi hành:{" "}
+                              {new Date(item.startDate).toLocaleDateString("vi-VN")}{" "}
+                              – Kết thúc:{" "}
+                              {new Date(item.endDate).toLocaleDateString("vi-VN")} •
+                              HDV phụ trách:{" "}
+                              <b>{item.guideName || "Đang chờ phân công"}</b>
+                            </p>
+
+                            <p className="text-xs text-slate-500">
+                              Thời hạn HDV được phép xem khi có consent:{" "}
+                              <b>
+                                {item.allowedFrom
+                                  ? new Date(item.allowedFrom).toLocaleDateString(
+                                    "vi-VN"
+                                  )
+                                  : "—"}{" "}
+                                –{" "}
+                                {item.allowedUntil
+                                  ? new Date(item.allowedUntil).toLocaleDateString(
+                                    "vi-VN"
+                                  )
+                                  : "—"}
+                              </b>{" "}
+                              (
+                              {item.guideAccessWindowAllowed
+                                ? "Đang trong thời hạn vận hành"
+                                : "Ngoài thời hạn vận hành"}
+                              )
+                            </p>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-2.5">
+                            {!item.phoneShared ? (
+                              <button
+                                type="button"
+                                disabled={
+                                  isUpdating || !item.canGrantConsent || isCancelled
+                                }
+                                onClick={() =>
+                                  handleConsentAction(item.bookingId, "GRANTED")
+                                }
+                                className="rounded-full bg-[#00606c] px-4 py-2.5 text-xs font-extrabold text-white transition hover:bg-[#004c56] disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {isUpdating ? "Đang lưu..." : "Đồng ý chia sẻ SĐT"}
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                disabled={isUpdating || !item.canRevokeConsent}
+                                onClick={() =>
+                                  handleConsentAction(item.bookingId, "REVOKED")
+                                }
+                                className="rounded-full bg-[#ba1a1a] px-4 py-2.5 text-xs font-extrabold text-white transition hover:bg-[#93000a] disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {isUpdating ? "Đang lưu..." : "Thu hồi quyền chia sẻ"}
+                              </button>
+                            )}
+
+                              {
+                                item.consentStatus !== "DENIED" ? (
+                                  <button
+                                    type="button"
+                                    disabled={isUpdating || !item.canRevokeConsent}
+                                    onClick={() =>
+                                      handleConsentAction(item.bookingId, "DENIED")
+                                    }
+                                    className="rounded-full border border-[#c5cfd1] bg-white px-4 py-2.5 text-xs font-extrabold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                  >
+                                    Từ chối chia sẻ
+                                  </button>
+                                ) : null
+                              }
+
+                              < button
+                              type="button"
+                            onClick={() => {
+                              setSelectedBookingId(item.bookingId);
+                              setLogsPage(1);
+                            }}
+                            className="rounded-full bg-[#e5f7fa] px-4 py-2.5 text-xs font-extrabold text-[#00606c] transition hover:bg-[#cfedf2]"
+                            >
+                            Lọc nhật ký đơn này
+                          </button>
+
+                          <Link
+                            href={`/my-bookings/${item.bookingId}`}
+                            className="rounded-full px-3 py-2 text-xs font-bold text-slate-600 hover:text-[#00606c] hover:underline"
+                          >
+                            Chi tiết đơn →
+                          </Link>
+                        </div>
+                      </div>
+                      </div>
+              );
+                  })}
           </div>
-        </div>
+              )}
+        </section>
+
+        <section
+          id="privacy-access-logs"
+          className="rounded-[3rem] bg-white p-6 shadow-sm shadow-cyan-900/5 md:p-10"
+        >
+          <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p className="mb-1 text-xs font-extrabold uppercase tracking-[0.16em] text-[#9b4500]">
+                Minh bạch dữ liệu • privacy_access_logs
+              </p>
+              <h2 className="text-2xl font-extrabold tracking-tight text-slate-900">
+                Lịch sử truy cập dữ liệu cá nhân của bạn
+              </h2>
+              <p className="mt-2 max-w-3xl text-sm leading-7 text-slate-500">
+                Mọi lượt xem hoặc cố gắng truy cập danh sách hành khách, thông
+                tin liên hệ và hồ sơ cá nhân của bạn đều được ghi nhận tự động
+                vào sổ nhật ký bất biến (không thể sửa hoặc xóa).
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={loadAccessLogs}
+              className="rounded-full border border-[#c5cfd1] bg-white px-5 py-2.5 text-xs font-extrabold text-[#00606c] transition hover:bg-[#eef2f3]"
+            >
+              Làm mới nhật ký
+            </button>
+          </div>
+
+          <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
+            <div className="rounded-2xl bg-[#f6fafb] p-4">
+              <p className="text-xs font-bold text-slate-500">
+                Tổng lượt ghi nhận
+              </p>
+              <p className="mt-1 text-2xl font-black text-[#00606c]">
+                {logStats.totalAccess}
+              </p>
+            </div>
+            <div className="rounded-2xl bg-[#f0fdf4] p-4">
+              <p className="text-xs font-bold text-green-700">
+                Được phép (ALLOWED)
+              </p>
+              <p className="mt-1 text-2xl font-black text-green-700">
+                {logStats.allowedCount}
+              </p>
+            </div>
+            <div className="rounded-2xl bg-[#fef2f2] p-4">
+              <p className="text-xs font-bold text-red-700">
+                Đã chặn (DENIED)
+              </p>
+              <p className="mt-1 text-2xl font-black text-red-700">
+                {logStats.deniedCount}
+              </p>
+            </div>
+            <div className="rounded-2xl bg-[#ecfeff] p-4">
+              <p className="text-xs font-bold text-[#00606c]">
+                Lượt từ Hướng dẫn viên
+              </p>
+              <p className="mt-1 text-2xl font-black text-[#00606c]">
+                {logStats.guideAccessCount}
+              </p>
+            </div>
+          </div>
+
+          <div className="mb-6 flex flex-col justify-between gap-3 md:flex-row md:items-center">
+            <div className="flex flex-wrap items-center gap-2">
+              {(
+                [
+                  ["", "Tất cả"],
+                  ["ALLOWED", "Được phép"],
+                  ["DENIED", "Bị từ chối"],
+                ] as const
+              ).map(([val, label]) => (
+                <button
+                  key={val || "ALL"}
+                  type="button"
+                  onClick={() => {
+                    setResultFilter(val);
+                    setLogsPage(1);
+                  }}
+                  className={`rounded-full px-4 py-2 text-xs font-extrabold transition ${resultFilter === val
+                    ? "bg-[#00606c] text-white"
+                    : "bg-[#f1f4f5] text-slate-700 hover:bg-[#e2e8ea]"
+                    }`}
+                >
+                  {label}
+                </button>
+              ))}
+
+              {selectedBookingId ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedBookingId("");
+                    setLogsPage(1);
+                  }}
+                  className="rounded-full bg-[#fff1df] px-3.5 py-2 text-xs font-extrabold text-[#9b4500] hover:bg-[#ffe4c4]"
+                >
+                  Đang lọc theo đơn #{selectedBookingId} ✕
+                </button>
+              ) : null}
+            </div>
+
+            <form
+              className="flex items-center gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                setAppliedQuery(searchQuery);
+                setLogsPage(1);
+              }}
+            >
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Tìm theo tên người xem, mã đơn, tour..."
+                className="w-full rounded-full bg-[#eef2f3] px-4 py-2.5 text-xs font-semibold text-slate-900 outline-none focus:ring-2 focus:ring-[#00606c] md:w-64"
+              />
+              <button
+                type="submit"
+                className="rounded-full bg-[#00606c] px-4 py-2.5 text-xs font-extrabold text-white hover:bg-[#004c56]"
+              >
+                Tìm
+              </button>
+            </form>
+          </div>
+
+          {logsLoading ? (
+            <div className="rounded-3xl bg-[#f6fafb] p-8 text-center text-sm font-bold text-slate-500">
+              Đang tải lịch sử truy cập dữ liệu cá nhân...
+            </div>
+          ) : accessLogs.length === 0 ? (
+            <div className="rounded-3xl bg-[#f6fafb] p-8 text-center text-sm font-bold text-slate-500">
+              Chưa có bản ghi truy cập dữ liệu cá nhân nào khớp với bộ lọc hiện
+              tại.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {accessLogs.map((log) => {
+                const isAllowed = log.result === "ALLOWED";
+                const reasonText = formatPrivacyReasonLabel(log.reason);
+
+                return (
+                  <div
+                    key={log.id}
+                    className={`rounded-2xl border-l-4 p-4 shadow-sm ${isAllowed
+                      ? "border-l-emerald-600 bg-[#f9fbfc]"
+                      : "border-l-red-500 bg-red-50/50"
+                      }`}
+                  >
+                    <div className="flex flex-col justify-between gap-2 md:flex-row md:items-center">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span
+                          className={`rounded-full px-3 py-1 text-[11px] font-extrabold uppercase ${isAllowed
+                            ? "bg-emerald-100 text-emerald-800"
+                            : "bg-red-100 text-red-700"
+                            }`}
+                        >
+                          {isAllowed ? "Được phép (ALLOWED)" : "Đã chặn (DENIED)"}
+                        </span>
+
+                        <span className="rounded-full bg-[#e5f7fa] px-3 py-1 text-xs font-extrabold text-[#00606c]">
+                          {formatAccessorRoleLabel(log.accessorRole)}
+                          {log.accessorName ? ` • ${log.accessorName}` : ""}
+                        </span>
+
+                        {log.bookingCode ? (
+                          <span className="rounded-full bg-slate-200/80 px-3 py-1 text-xs font-bold text-slate-700">
+                            Đơn {log.bookingCode}
+                          </span>
+                        ) : null}
+
+                        {log.departureCode ? (
+                          <span className="rounded-full bg-slate-200/80 px-3 py-1 text-xs font-bold text-slate-700">
+                            Chuyến {log.departureCode}
+                          </span>
+                        ) : null}
+                      </div>
+
+                      <span className="text-xs font-bold text-slate-500">
+                        {new Date(log.createdAt).toLocaleString("vi-VN")}
+                      </span>
+                    </div>
+
+                    <div className="mt-2.5 grid grid-cols-1 gap-2 text-xs text-slate-700 md:grid-cols-3">
+                      <p>
+                        <b>Loại dữ liệu:</b>{" "}
+                        {formatPrivacyDataTypeLabel(log.dataType)} ({log.action})
+                      </p>
+                      <p>
+                        <b>Mục đích:</b>{" "}
+                        {formatPrivacyPurposeLabel(log.purpose)}
+                      </p>
+                      <p>
+                        <b>Chuyến / Tour:</b>{" "}
+                        {log.tourName || "Hệ thống quản lý khách hàng"}
+                      </p>
+                    </div>
+
+                    {reasonText ? (
+                      <p className="mt-2 text-xs font-bold text-red-700">
+                        Lý do: {reasonText}
+                      </p>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {logsTotal > 10 ? (
+            <div className="mt-6 flex items-center justify-between border-t border-slate-100 pt-4 text-xs font-bold text-slate-600">
+              <span>
+                Trang {logsPage} / {Math.max(1, Math.ceil(logsTotal / 10))} (Tổng{" "}
+                {logsTotal} lượt)
+              </span>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={logsPage <= 1}
+                  onClick={() => setLogsPage((p) => Math.max(1, p - 1))}
+                  className="rounded-full border border-slate-300 px-4 py-1.5 disabled:opacity-40"
+                >
+                  Trước
+                </button>
+                <button
+                  type="button"
+                  disabled={logsPage >= Math.ceil(logsTotal / 10)}
+                  onClick={() => setLogsPage((p) => p + 1)}
+                  className="rounded-full border border-slate-300 px-4 py-1.5 disabled:opacity-40"
+                >
+                  Sau
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </section>
       </div>
-    </main>
-  );
+    </div>
+    </div >
+  </main >
+);
 }
 
 function PasswordField({

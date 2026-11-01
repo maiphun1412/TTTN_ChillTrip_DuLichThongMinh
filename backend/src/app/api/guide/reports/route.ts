@@ -1,7 +1,13 @@
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { ok, fail } from "@/lib/api-response";
-import { requireGuide } from "@/lib/guide-auth";
+import { verifyGuideAccess } from "@/lib/guide-auth";
+import {
+  checkGuideAssignmentOwnership,
+  parseAssignmentId,
+  recordGuideAuditLog,
+  redactSensitiveNotes,
+} from "@/lib/guide-privacy";
 
 function serialize<T>(data: T): T {
   return JSON.parse(
@@ -11,14 +17,31 @@ function serialize<T>(data: T): T {
   );
 }
 
+function sanitizeReportObject(value: unknown): unknown {
+  if (typeof value === "string") {
+    return redactSensitiveNotes(value) ?? value;
+  }
+  if (Array.isArray(value)) {
+    return value.map(sanitizeReportObject);
+  }
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = sanitizeReportObject(v);
+    }
+    return out;
+  }
+  return value;
+}
+
 function safeParseReport(content?: string | null) {
   if (!content) return null;
 
   try {
-    return JSON.parse(content);
+    return sanitizeReportObject(JSON.parse(content));
   } catch {
     return {
-      generalSummary: content,
+      generalSummary: redactSensitiveNotes(content) ?? content,
     };
   }
 }
@@ -54,87 +77,87 @@ type RawReportRow = {
 };
 
 export async function GET(req: NextRequest) {
-  const guideAuth = await requireGuide(req);
+  const authCheck = await verifyGuideAccess(req);
 
-  if (!guideAuth) {
-    return fail("Bạn không có quyền truy cập khu vực hướng dẫn viên", 403);
+  if (!authCheck.ok) {
+    return fail(authCheck.message, authCheck.status);
   }
 
   try {
-    const guideId = Number(guideAuth.guideId);
+    const guideId = BigInt(authCheck.guide.guideId);
 
-    if (!guideId || Number.isNaN(guideId)) {
-      return fail("Không xác định được hướng dẫn viên", 403);
-    }
-
-    const rows = await prisma.$queryRawUnsafe<RawReportRow[]>(
-      `
-        WITH booking_summary AS (
-          SELECT
-            departure_id,
-            COUNT(id) AS bookingCount,
-            COALESCE(SUM(adult_count + child_count), 0) AS passengerCount
-          FROM bookings
-          WHERE booking_status NOT IN ('CANCELLED')
-          GROUP BY departure_id
-        ),
-        latest_report AS (
-          SELECT *
-          FROM (
-            SELECT
-              id,
-              departure_id,
-              log_type,
-              content,
-              log_time,
-              ROW_NUMBER() OVER (
-                PARTITION BY departure_id
-                ORDER BY log_time DESC, id DESC
-              ) AS rn
-            FROM departure_operation_logs
-            WHERE log_type IN ('END_TRIP_REPORT_DRAFT', 'END_TRIP_REPORT')
-          ) x
-          WHERE x.rn = 1
-        )
+    const rows = await prisma.$queryRaw<RawReportRow[]>`
+      WITH booking_summary AS (
         SELECT
-          ga.id AS assignmentId,
-          ga.notes AS assignmentNotes,
+          departure_id,
+          COUNT(id) AS bookingCount,
+          COALESCE(SUM(adult_count + child_count), 0) AS passengerCount
+        FROM bookings
+        WHERE booking_status NOT IN ('CANCELLED')
+        GROUP BY departure_id
+      ),
+      latest_report AS (
+        SELECT
+          x.id,
+          x.departure_id,
+          x.log_type,
+          x.content,
+          x.log_time
+        FROM (
+          SELECT
+            id,
+            departure_id,
+            log_type,
+            content,
+            log_time,
+            ROW_NUMBER() OVER (
+              PARTITION BY departure_id
+              ORDER BY log_time DESC, id DESC
+            ) AS rn
+          FROM departure_operation_logs
+          WHERE log_type IN ('END_TRIP_REPORT_DRAFT', 'END_TRIP_REPORT')
+        ) x
+        WHERE x.rn = 1
+      )
+      SELECT
+        ga.id AS assignmentId,
+        ga.notes AS assignmentNotes,
 
-          ds.id AS departureId,
-          ds.departure_code AS departureCode,
-          ds.start_date AS startDate,
-          ds.end_date AS endDate,
-          ds.booking_status AS bookingStatus,
+        ds.id AS departureId,
+        ds.departure_code AS departureCode,
+        ds.start_date AS startDate,
+        ds.end_date AS endDate,
+        ds.booking_status AS bookingStatus,
 
-          t.id AS tourId,
-          t.tour_code AS tourCode,
-          t.tour_name AS tourName,
-          t.duration_days AS durationDays,
-          t.duration_nights AS durationNights,
-          t.featured_image_url AS featuredImageUrl,
+        t.id AS tourId,
+        t.tour_code AS tourCode,
+        t.tour_name AS tourName,
+        t.duration_days AS durationDays,
+        t.duration_nights AS durationNights,
+        t.featured_image_url AS featuredImageUrl,
 
-          d.destination_name AS destinationName,
-          d.city AS destinationCity,
-          d.country AS destinationCountry,
+        d.destination_name AS destinationName,
+        d.city AS destinationCity,
+        d.country AS destinationCountry,
 
-          ISNULL(bs.bookingCount, 0) AS bookingCount,
-          ISNULL(bs.passengerCount, 0) AS passengerCount,
+        ISNULL(bs.bookingCount, 0) AS bookingCount,
+        ISNULL(bs.passengerCount, 0) AS passengerCount,
 
-          lr.id AS reportId,
-          lr.log_type AS reportType,
-          lr.content AS reportContent,
-          lr.log_time AS reportSubmittedAt
-        FROM guide_assignments ga
-        INNER JOIN departure_schedules ds ON ga.departure_id = ds.id
-        INNER JOIN tours t ON ds.tour_id = t.id
-        LEFT JOIN destinations d ON t.destination_id = d.id
-        LEFT JOIN booking_summary bs ON bs.departure_id = ds.id
-        LEFT JOIN latest_report lr ON lr.departure_id = ds.id
-        WHERE ga.guide_id = @P1
-        ORDER BY ds.end_date DESC, ds.start_date DESC
-      `,
-      guideId
-    );
+        lr.id AS reportId,
+        lr.log_type AS reportType,
+        lr.content AS reportContent,
+        lr.log_time AS reportSubmittedAt
+      FROM guide_assignments ga
+      INNER JOIN departure_schedules ds ON ga.departure_id = ds.id
+      INNER JOIN tours t ON ds.tour_id = t.id
+      LEFT JOIN destinations d ON t.destination_id = d.id
+      LEFT JOIN booking_summary bs ON bs.departure_id = ds.id
+      LEFT JOIN latest_report lr ON lr.departure_id = ds.id
+      WHERE ga.guide_id = ${guideId}
+        AND ds.guide_id IS NOT NULL
+        AND ds.guide_id = ga.guide_id
+      ORDER BY ds.end_date DESC, ds.start_date DESC
+    `;
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -155,7 +178,7 @@ export async function GET(req: NextRequest) {
 
       return {
         assignmentId: String(row.assignmentId),
-        assignmentNotes: row.assignmentNotes,
+        assignmentNotes: redactSensitiveNotes(row.assignmentNotes),
 
         departureId: String(row.departureId),
         departureCode: row.departureCode,
@@ -187,7 +210,10 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    return ok(serialize(data), "Lấy danh sách báo cáo kết thúc chuyến thành công");
+    return ok(
+      serialize(data),
+      "Lấy danh sách báo cáo kết thúc chuyến thành công"
+    );
   } catch (error) {
     console.error("GET /api/guide/reports error:", error);
     return fail("Không thể lấy danh sách báo cáo kết thúc chuyến", 500);
@@ -195,67 +221,80 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const guideAuth = await requireGuide(req);
+  const authCheck = await verifyGuideAccess(req);
 
-  if (!guideAuth) {
-    return fail("Bạn không có quyền truy cập khu vực hướng dẫn viên", 403);
+  if (!authCheck.ok) {
+    await recordGuideAuditLog(req, {
+      module: "GUIDE_REPORT",
+      action: "SUBMIT_REPORT_DENIED",
+      entityName: "departure_schedules",
+      newData: { reason: authCheck.reason },
+    });
+    return fail(authCheck.message, authCheck.status);
   }
+
+  const guideId = BigInt(authCheck.guide.guideId);
+  const guideUserId = BigInt(authCheck.guide.userId);
 
   try {
     const body = await req.json();
 
-    const assignmentId = Number(body.assignmentId);
-    const status = String(body.status || "DRAFT").toUpperCase();
-    const report = body.report || {};
+    const assignmentId = parseAssignmentId(body?.assignmentId);
+    const status = String(body?.status || "DRAFT").toUpperCase();
+    const rawReport = body?.report || {};
 
-    if (!assignmentId || Number.isNaN(assignmentId)) {
-      return fail("Thiếu ID phân công chuyến đi", 400);
+    if (assignmentId === null) {
+      return fail("Thiếu hoặc sai định dạng ID phân công chuyến đi", 400);
     }
 
-    const assignmentRows: any[] = await prisma.$queryRawUnsafe(
-      `
-        SELECT
-          ga.id AS assignmentId,
-          ga.departure_id AS departureId,
-          ds.end_date AS endDate
-        FROM guide_assignments ga
-        INNER JOIN departure_schedules ds ON ga.departure_id = ds.id
-        WHERE ga.id = @P1
-          AND ga.guide_id = @P2
-      `,
+    const ownership = await checkGuideAssignmentOwnership(
       assignmentId,
-      Number(guideAuth.guideId)
+      guideId
     );
 
-    if (!assignmentRows.length) {
+    if (
+      ownership.status === "NOT_FOUND" ||
+      ownership.status === "FORBIDDEN_NOT_ASSIGNED"
+    ) {
+      await recordGuideAuditLog(req, {
+        actorUserId: guideUserId,
+        module: "GUIDE_REPORT",
+        action: "SUBMIT_REPORT_DENIED",
+        entityName: "departure_schedules",
+        newData: { reason: "GUIDE_NOT_ASSIGNED" },
+      });
       return fail("Không tìm thấy chuyến được phân công", 404);
     }
 
-    const departureId = Number(assignmentRows[0].departureId);
+    const departureId = ownership.departureId;
+    const safeReport = sanitizeReportObject(rawReport);
 
     const logType =
       status === "SUBMITTED" ? "END_TRIP_REPORT" : "END_TRIP_REPORT_DRAFT";
 
-    await prisma.$executeRawUnsafe(
-      `
-        INSERT INTO departure_operation_logs (
-          departure_id,
-          log_type,
-          content,
-          created_by
-        )
-        VALUES (
-          @P1,
-          @P2,
-          @P3,
-          @P4
-        )
-      `,
-      departureId,
-      logType,
-      JSON.stringify(report),
-      Number(guideAuth.userId)
-    );
+    await prisma.$executeRaw`
+      INSERT INTO departure_operation_logs (
+        departure_id,
+        log_type,
+        content,
+        created_by
+      )
+      VALUES (
+        ${departureId},
+        ${logType},
+        ${JSON.stringify(safeReport)},
+        ${guideUserId}
+      )
+    `;
+
+    await recordGuideAuditLog(req, {
+      actorUserId: guideUserId,
+      module: "GUIDE_REPORT",
+      action: status === "SUBMITTED" ? "SUBMIT_REPORT" : "SAVE_REPORT_DRAFT",
+      entityName: "departure_schedules",
+      entityId: departureId,
+      newData: { status },
+    });
 
     return ok(
       null,
